@@ -1,0 +1,23 @@
+# Bot
+python-telegram-bot==21.*
+
+# API
+fastapi==0.*
+uvicorn[standard]==0.*
+
+# Database
+pymongo==4.*
+psycopg2-binary==2.*
+
+# Queue
+confluent-kafka==2.*
+
+# AI
+google-generativeai==0.*
+
+# Scraping
+httpx==0.*
+beautifulsoup4==4.*
+
+# Config
+pydantic-settings==2.*
