@@ -70,10 +70,10 @@ voice/
 │   ├── db.py                   # MongoDB and PostgreSQL connection helpers
 │   └── schemas.py              # Shared TypedDicts (RawDocument, ClassifiedDocument)
 ├── sources/                    # Plugin-based scrapers
-│   ├── base.py                 # BaseSource abstract class
+│   ├── __init__.py             # BaseSource abstract class + imports all plugins so decorators fire on import
 │   ├── registry.py             # @register_source decorator + get_all_sources()
-│   ├── __init__.py             # Imports all plugins so decorators fire on import
-│   └── detik.py                # One file per source (detik, kompas, reddit, …)
+│   └── news/                   # Category subdirectory — one folder per source type (news, reddit, …)
+│       └── detik.py            # One file per source plugin
 ├── bot/
 │   └── main.py                 # python -m bot.main
 ├── api/
@@ -89,15 +89,21 @@ voice/
 └── README.md
 ```
 
-**Source plugin contract** — every source implements one method and self-registers:
+**Source plugin contract** — every source implements three methods and self-registers:
 
 ```python
+from sources import BaseSource
 from sources.registry import register_source
-from sources.base import BaseSource
 
 @register_source("detik")
 class DetikSource(BaseSource):
     def fetch(self, keyword: str) -> list[dict]:
+        ...
+
+    def process(self, data: dict, **kwargs) -> list[dict]:
+        ...
+
+    def output(self, data: dict, **kwargs) -> None:
         ...
 ```
 

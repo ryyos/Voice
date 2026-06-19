@@ -1,5 +1,5 @@
 from typing import Type
-from sources.base import BaseSource
+from sources import BaseSource
 
 _registry: dict[str, Type[BaseSource]] = {}
 
