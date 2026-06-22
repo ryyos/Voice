@@ -1,11 +1,13 @@
 # Environment
 .env
-.env.local
+.env.*
+!.env.example
 
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
 .Python
 *.egg-info/
 dist/
@@ -17,19 +19,27 @@ build/
 venv/
 env/
 
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checking
+.mypy_cache/
+.ruff_cache/
+
 # IDE
 .vscode/
 .idea/
 *.iml
 
-# Testing & coverage
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Logs
-*.log
-
 # OS
 .DS_Store
 Thumbs.db
+
+# Docker
+*.log
+
+# Data / secrets
+*.pem
+*.key
