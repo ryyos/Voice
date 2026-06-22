@@ -1,14 +1,11 @@
 
 import json
-import settings
 import os
 
 from loguru import logger
-from time import sleep
-from icecream import ic
-
 from typing import Generator
-from valkyt.utils import Stream, File
+
+from shared.utils import Stream, File
 from .connection import ConnectionKafkaProducer, ConnectionKafkaConsumer
 
 class Kafkaa:

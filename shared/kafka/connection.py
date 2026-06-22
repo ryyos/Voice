@@ -1,7 +1,7 @@
 import os
 import json
-import settings
 
+from shared.config import settings
 from icecream import ic
 from loguru import logger
 from kafka import KafkaProducer, KafkaConsumer
@@ -10,8 +10,8 @@ class ConnectionKafkaProducer:
     def __init__(self, bootstrap: str) -> KafkaProducer:
         for i in range(10):
             try:
-                self.__bootstrap_servers: dict = settings.KAFKA["bootstrap"]
-                self.kafka_produser = KafkaProducer(bootstrap_servers=self.__bootstrap_servers[bootstrap])
+                _bootstrap: str = settings.kafka_broker
+                self.kafka_produser = KafkaProducer(bootstrap_servers=_bootstrap)
                 
                 if self.kafka_produser:
                     break
@@ -31,11 +31,11 @@ class ConnectionKafkaConsumer:
 
         for i in range(10):
             try:
-                self.__bootstrap_servers: dict = settings.KAFKA["bootstrap"]
+                _bootstrap: str = settings.kafka_broker
 
                 self.kafka_consumer = KafkaConsumer(
                     topic,
-                    bootstrap_servers=self.__bootstrap_servers[bootstrap],
+                    bootstrap_servers=_bootstrap,
                     group_id=group_id,
                     auto_offset_reset=auto_offset_reset,
                     enable_auto_commit=False,
