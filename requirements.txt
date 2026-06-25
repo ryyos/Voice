@@ -10,3 +10,4 @@ beautifulsoup4==4.*
 pydantic-settings==2.*
 icecream
 loguru
+python-dateutil==2.*
