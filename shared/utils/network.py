@@ -5,7 +5,7 @@ import sys
 import time
 from typing import Any, Callable
 
-from loguru import logger
+from .logger import log
 
 # ── optional backend detection ──────────────────────────────────────────
 try:
@@ -178,7 +178,8 @@ class _HttpxBackend:
 
         with httpx.Client(**client_kw) as client:
             if progress_callback:
-                req = client.build_request(
+                start = time.time()
+                with client.stream(
                     method=method,
                     url=url,
                     params=params,
@@ -187,9 +188,7 @@ class _HttpxBackend:
                     json=json,
                     data=data,
                     files=files,
-                )
-                start = time.time()
-                with client.stream(req) as stream:
+                ) as stream:
                     chunks, total = [], 0
                     for chunk in stream.iter_bytes():
                         chunks.append(chunk)
@@ -448,7 +447,7 @@ class Network:
         # Validasi backend
         bk = backend.lower()
         if bk not in _BACKENDS:
-            logger.error(f"Unknown backend [{bk}]. Available: {', '.join(_BACKENDS)}")
+            log.error(f"Unknown backend [{bk}]. Available: {', '.join(_BACKENDS)}")
             return None
         engine = _BACKENDS[bk]
 
@@ -469,18 +468,18 @@ class Network:
         )
 
         # Log request
-        logger.info(f"⟶  {method.upper()} {url}")
+        log.info(f"⟶  {method.upper()} {url}")
         if params:
-            logger.debug(f"   params : {params}")
+            log.debug(f"   params : {params}")
         if headers:
-            logger.debug(f"   headers: {headers}")
+            log.debug(f"   headers: {headers}")
         if cookies:
-            logger.debug(f"   cookies: {cookies}")
+            log.debug(f"   cookies: {cookies}")
         if json is not None:
-            logger.debug(f"   json   : {json}")
+            log.debug(f"   json   : {json}")
         if data is not None:
-            logger.debug(f"   data   : {data}")
-        logger.debug(f"   backend: {bk}  |  retry: {retry}  |  timeout: {timeout}s")
+            log.debug(f"   data   : {data}")
+        log.debug(f"   backend: {bk}  |  retry: {retry}  |  timeout: {timeout}s")
 
         # Progress bar state
         progress: _Progress | None = None
@@ -495,7 +494,7 @@ class Network:
         for attempt in range(retry + 1):
             try:
                 if attempt > 0:
-                    logger.info(f"   ↻ retry {attempt}/{retry} …")
+                    log.info(f"   ↻ retry {attempt}/{retry} …")
 
                 # Jalankan request
                 resp = engine.request(**payload, progress_callback=_on_progress if show_progress else None)
@@ -505,7 +504,7 @@ class Network:
                 dur = _fmt_time(resp.elapsed)
                 icon = "✓" if resp.ok else "✗"
                 level = "SUCCESS" if resp.ok else "WARNING"
-                logger.log(
+                log.log(
                     "INFO" if resp.ok else "WARNING",
                     f"   {icon} {resp.status_code}  │  {size}  │  {dur}  │  {resp.url}",
                 )
@@ -513,7 +512,7 @@ class Network:
                 # Retry kalau status retryable
                 if resp.status_code in retry_on and attempt < retry:
                     wait = backoff ** (attempt + 1)
-                    logger.warning(f"   ⚠ status {resp.status_code} → retry in {wait:.1f}s")
+                    log.warning(f"   ⚠ status {resp.status_code} → retry in {wait:.1f}s")
                     time.sleep(wait)
                     continue
 
@@ -522,30 +521,30 @@ class Network:
             except (httpx.TimeoutException, httpx.ConnectError,
                     httpx.RemoteProtocolError, httpx.NetworkError) as e:
                 last_error = e
-                logger.warning(f"   ✗ network error (attempt {attempt + 1}): {e}")
+                log.warning(f"   ✗ network error (attempt {attempt + 1}): {e}")
 
             except Exception as e:
                 last_error = e
                 # Tangkap juga error dari requests/cloudscraper
                 name = type(e).__name__
                 if any(x in name.lower() for x in ("timeout", "connection", "network", "proxy", "sslerror")):
-                    logger.warning(f"   ✗ {name} (attempt {attempt + 1}): {e}")
+                    log.warning(f"   ✗ {name} (attempt {attempt + 1}): {e}")
                 else:
-                    logger.error(f"   ✗ unexpected {name}: {e}")
+                    log.error(f"   ✗ unexpected {name}: {e}")
                     # Unexpected error → jangan retry
                     return None
 
             if attempt < retry:
                 wait = backoff ** (attempt + 1)
-                logger.info(f"   ⏳ waiting {wait:.1f}s …")
+                log.info(f"   ⏳ waiting {wait:.1f}s …")
                 time.sleep(wait)
 
         # Semua gagal
-        logger.error(
+        log.error(
             f"   ✗ ALL {retry + 1} ATTEMPTS FAILED for {method.upper()} {url}"
         )
         if last_error:
-            logger.error(f"   last error: {type(last_error).__name__}: {last_error}")
+            log.error(f"   last error: {type(last_error).__name__}: {last_error}")
         return None
 
     # ── HTTP method shortcuts ───────────────────────────────────────
@@ -588,14 +587,14 @@ class Network:
 
         resp = Network.get(url, show_progress=True, **kwargs)
         if resp is None or not resp.ok:
-            logger.error(f"Download failed: {url}")
+            log.error(f"Download failed: {url}")
             return False
 
         Dir.create_dir(Dir.basedir(path))
         with open(path, "wb") as f:
             f.write(resp.content)
 
-        logger.info(f"   ✓ saved → {path}  ({_fmt_size(len(resp.content))})")
+        log.info(f"   ✓ saved → {path}  ({_fmt_size(len(resp.content))})")
         return True
 
     # ── info ────────────────────────────────────────────────────────
@@ -612,7 +611,7 @@ class Network:
     @staticmethod
     def info() -> None:
         """Tampilkan info backend."""
-        logger.info(f"Available backends: {', '.join(Network.backends())}")
-        logger.info(f"  httpx         — {'✓' if True else '✗'} always installed")
-        logger.info(f"  requests      — {'✓' if _HAS_REQUESTS else '✗ pip install requests'}")
-        logger.info(f"  cloudscraper  — {'✓' if _HAS_CLOUDSCRAPER else '✗ pip install cloudscraper'}")
+        log.info(f"Available backends: {', '.join(Network.backends())}")
+        log.info(f"  httpx         — {'✓' if True else '✗'} always installed")
+        log.info(f"  requests      — {'✓' if _HAS_REQUESTS else '✗ pip install requests'}")
+        log.info(f"  cloudscraper  — {'✓' if _HAS_CLOUDSCRAPER else '✗ pip install cloudscraper'}")
