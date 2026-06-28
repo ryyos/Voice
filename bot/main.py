@@ -16,7 +16,12 @@ async def handle_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     Kafkaa.send(
-        data={"keyword": keyword},
+        data={
+            "keyword": keyword,
+            "interval": "30d",
+            "platforms": "all",
+            "news_sources": "all"
+        },
         topic=settings.kafka_topic_keyword,
         bootstrap=settings.kafka_broker,
     )
