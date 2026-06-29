@@ -1,11 +1,41 @@
 from __future__ import annotations
 
-import sys
+import logging
 import threading
 from pathlib import Path
 
 from loguru import logger as _logger
+from rich.console import Console
 
+
+# ── shared Rich console ───────────────────────────────────────────────────
+shared_console = Console(stderr=True)
+
+
+# ── stdlib → loguru bridge ────────────────────────────────────────────────
+# Routes ALL stdlib logging (httpx, httpcore, kafka-python, etc.) through
+# loguru, so a single suppress call silences every log source at once.
+class _InterceptHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level = _logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        frame, depth = logging.currentframe(), 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        _logger.opt(depth=depth, exception=record.exc_info).log(
+            level, record.getMessage()
+        )
+
+
+logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
+
+
+# ── file sink ─────────────────────────────────────────────────────────────
 class _LineRotatingSink:
 
     def __init__(
@@ -62,23 +92,53 @@ FILE_FORMAT = (
     "{message}"
 )
 
-# Hapus handler default loguru supaya tidak dobel dengan stdlib logging
 _logger.remove()
 
-# Console — colorized
-_logger.add(
-    sys.stderr,
+
+def _console_sink(message: str) -> None:
+    shared_console.print(message, end="", markup=False, highlight=False)
+
+
+_console_sink_id: int = _logger.add(
+    _console_sink,
     format=LOG_FORMAT,
     level="DEBUG",
     colorize=True,
 )
 
-# File — line-rotating, max 1000 baris
 _logger.add(
     _LineRotatingSink(LOG_PATH, max_lines=1000, check_every=10),
     format=FILE_FORMAT,
     level="DEBUG",
 )
+
+
+# ── console level control (used by ProcessMonitor) ────────────────────────
+
+def suppress_console() -> None:
+    """Raise console threshold to WARNING while Live is active.
+    INFO/DEBUG still go to file. WARNING+ still visible on terminal."""
+    global _console_sink_id
+    _logger.remove(_console_sink_id)
+    _console_sink_id = _logger.add(
+        _console_sink,
+        format=LOG_FORMAT,
+        level="WARNING",
+        colorize=True,
+    )
+
+
+def restore_console() -> None:
+    """Restore full DEBUG logging after Live stops."""
+    global _console_sink_id
+    _logger.remove(_console_sink_id)
+    _console_sink_id = _logger.add(
+        _console_sink,
+        format=LOG_FORMAT,
+        level="DEBUG",
+        colorize=True,
+    )
+
 
 # ── public instance ───────────────────────────────────────────────────────
 

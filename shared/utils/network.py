@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import math
 import sys
 import time
@@ -577,6 +578,39 @@ class Network:
     def options(url: str, **kwargs) -> Response | None:
         kwargs.setdefault("show_progress", False)
         return Network.request("OPTIONS", url, **kwargs)
+
+    # ── async shortcuts (wraps sync methods via asyncio.to_thread) ─────────
+    @staticmethod
+    async def arequest(method: str, url: str, **kwargs) -> Response | None:
+        return await asyncio.to_thread(Network.request, method, url, **kwargs)
+
+    @staticmethod
+    async def aget(url: str, **kwargs) -> Response | None:
+        return await asyncio.to_thread(Network.get, url, **kwargs)
+
+    @staticmethod
+    async def apost(url: str, **kwargs) -> Response | None:
+        return await asyncio.to_thread(Network.post, url, **kwargs)
+
+    @staticmethod
+    async def aput(url: str, **kwargs) -> Response | None:
+        return await asyncio.to_thread(Network.put, url, **kwargs)
+
+    @staticmethod
+    async def apatch(url: str, **kwargs) -> Response | None:
+        return await asyncio.to_thread(Network.patch, url, **kwargs)
+
+    @staticmethod
+    async def adelete(url: str, **kwargs) -> Response | None:
+        return await asyncio.to_thread(Network.delete, url, **kwargs)
+
+    @staticmethod
+    async def ahead(url: str, **kwargs) -> Response | None:
+        return await asyncio.to_thread(Network.head, url, **kwargs)
+
+    @staticmethod
+    async def aoptions(url: str, **kwargs) -> Response | None:
+        return await asyncio.to_thread(Network.options, url, **kwargs)
 
     # ── download ────────────────────────────────────────────────────
     @staticmethod

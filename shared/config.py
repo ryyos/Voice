@@ -22,5 +22,8 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str
 
+    # Monitoring
+    log_split: bool = False
+
 
 settings = Settings()

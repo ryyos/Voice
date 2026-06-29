@@ -11,3 +11,8 @@ pydantic-settings==2.*
 icecream
 loguru
 python-dateutil==2.*
+rich
+pyquery
+cloudscraper
+jmespath
+typing_extensions
