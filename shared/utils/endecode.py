@@ -139,3 +139,4 @@ class Endecode:
         if algo == "sha256":
             return Endecode.sha256(combined)
         return Endecode.md5(combined)
+

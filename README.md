@@ -1,25 +1,27 @@
-# Voice
+<div align="center">
+  <img src="assets/voice_project_logo.png" alt="Voice" width="600"/>
 
-> A public opinion & sentiment tracker — collect, classify, and serve what the world is saying about any topic.
+  <br/>
+  <br/>
+
+  <p>
+    <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white"/>
+    <img src="https://img.shields.io/badge/MongoDB-7-47A248?style=for-the-badge&logo=mongodb&logoColor=white"/>
+    <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white"/>
+    <img src="https://img.shields.io/badge/Redpanda-Kafka--compatible-E6522C?style=for-the-badge&logo=apachekafka&logoColor=white"/>
+    <img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge"/>
+  </p>
+
+  <p><em>Public opinion & sentiment tracker — built as a data engineering portfolio project.</em></p>
+</div>
 
 ---
 
 ## Overview
 
-**Voice** is a portfolio project built to demonstrate end-to-end data engineering skills. It collects public opinion from news sites and social media (no login required), runs AI-powered sentiment and stance classification, and exposes the results through a REST API. Users trigger searches via a Telegram bot by submitting a keyword.
+**Voice** collects public opinion from news sites and social media (no login required), classifies sentiment using a hybrid AI pipeline (local IndoBERT + Gemini fallback), and exposes results through a REST API. Users trigger searches via Telegram by sending a keyword.
 
-The goal is not just to build a working system, but to design one that is extensible, observable, and honest about its limitations — qualities that matter in production data engineering work.
-
----
-
-## Key Features
-
-- **Keyword-driven searches** triggered through a Telegram bot interface
-- **Plugin-based source registry** — adding a new scraper requires only one new file, with zero changes to the pipeline
-- **Dual-storage architecture** — raw data preserved in MongoDB; structured, queryable results in PostgreSQL
-- **Async AI classification** via Gemini API (sentiment + stance per article/post)
-- **REST API** to query aggregated results by keyword, source, date, or sentiment
-- **Decoupled pipeline** via Kafka/Redpanda message queue for resilience and horizontal scaling
+Designed to demonstrate end-to-end data engineering: raw ingestion → structured cleaning → AI enrichment → queryable API — all decoupled, observable, and extensible.
 
 ---
 
@@ -27,37 +29,56 @@ The goal is not just to build a working system, but to design one that is extens
 
 ```mermaid
 flowchart LR
-    A([Telegram Bot]) -->|keyword job| B[Kafka / Redpanda]
-    B --> C[Scraper Workers]
-    C -->|raw documents| D[(MongoDB\nraw zone)]
-    D --> E[AI Processor\nGemini API]
-    E -->|classified records| F[(PostgreSQL\nstructured zone)]
-    F --> G[FastAPI\nREST API]
-    G --> H([Consumers\nBot / Dashboard / External])
+    A([Telegram Bot]) -->|keyword job| B[Redpanda / Kafka]
+    B --> C[Scraper Worker]
+    C -->|raw HTML / JSON| D[(MongoDB\ndatalake)]
+    D --> E[Cleaner]
+    E -->|structured rows| F[(PostgreSQL\nwarehouse)]
+    F --> G[AI Processor\nIndoBERT + Gemini]
+    G -->|sentiment + stance| F
+    F --> H[FastAPI]
+    H --> I([Bot / Dashboard / API Clients])
+
+    V[(Valkey\nCache)] -. anti re-scrape .-> C
+    V -. cleaner checkpoint .-> E
 ```
 
-**Data flow in plain English:**
-1. A user sends a keyword to the Telegram bot.
-2. The bot publishes a search job to the Kafka topic.
-3. Scraper workers consume the job and fetch content from registered source plugins (news sites, Reddit, etc.).
-4. Raw documents are stored as-is in MongoDB for traceability.
-5. The AI processor reads from MongoDB, calls Gemini for sentiment/stance classification, and writes structured records to PostgreSQL.
-6. The FastAPI layer serves query results to any consumer (the bot, a dashboard, or direct API clients).
+**Data flow:**
+1. A keyword arrives at the Telegram bot and is published as a job to Redpanda.
+2. The scraper worker fetches content from all registered source plugins and stores **raw** HTML/JSON in MongoDB (datalake — insert-only, no mutations).
+3. A Valkey (Redis-compatible) cache keyed on the URL's MD5 prevents re-scraping the same content.
+4. The **Cleaner** reads from MongoDB, parses the raw payload per source, and writes clean structured rows to PostgreSQL.
+5. The **AI Processor** classifies unprocessed comments: IndoBERT handles the bulk (local, free, no rate limit), Gemini handles low-confidence and stance-complex cases.
+6. FastAPI exposes aggregated results — queryable by keyword, source, date, or sentiment.
+
+---
+
+## Key Features
+
+- **Keyword-driven** search triggered via Telegram bot
+- **Raw-first pipeline** — raw HTML/JSON preserved in MongoDB for full reprocessability; cleaning and AI are separate idempotent passes
+- **Plugin-based source registry** — one new file = one new source, zero changes to the pipeline
+- **Hybrid AI** — local IndoBERT for bulk classification, Gemini API (free tier) as fallback for hard cases
+- **Anti re-scrape cache** — Valkey tracks scraped URLs so repeated jobs are efficient
+- **Broker flexibility** — Redpanda (lightweight, dev-friendly) or Kafka (production-grade) selectable via a single env var
 
 ---
 
 ## Tech Stack
 
-| Component | Technology | Rationale |
+| Layer | Technology | Notes |
 |---|---|---|
-| Language | Python | Dominant in data engineering; rich ecosystem for scraping, ML, and APIs |
-| Bot interface | python-telegram-bot | Simple, well-documented; Telegram bots need no hosting for the client side |
-| Message queue | Kafka (or Redpanda) | Decouples ingestion from processing; Redpanda is a lighter drop-in for local dev |
-| Raw storage | MongoDB | Schema-flexible; ideal for heterogeneous scraped documents with no fixed shape |
-| Structured storage | PostgreSQL | ACID-compliant; well-suited for aggregated, queryable sentiment records |
-| AI classification | Gemini API (free tier) | Capable LLM available without cost barrier; swappable via an abstraction layer |
-| API layer | FastAPI | Async, typed, auto-documents via OpenAPI; production-grade with minimal boilerplate |
-| Scheduling (later) | Apache Airflow | Industry-standard orchestrator for scheduled pipeline runs |
+| Language | Python 3.11+ | All services, single repo |
+| Bot | python-telegram-bot | Keyword input; no NL intent parsing yet |
+| Message queue | Redpanda / Kafka | `BROKER_TYPE=redpanda\|kafka` — kafka-python works with both |
+| Datalake | MongoDB 7 | Raw HTML/JSON, insert-only, WiredTiger cache capped at 512MB |
+| Cache | Valkey 8 (Redis-compatible) | Anti re-scrape + cleaner checkpoint |
+| Warehouse | PostgreSQL 16 | Cleaned content + sentiment results |
+| AI — bulk | IndoBERT (local) | Free, no rate limit, runs offline |
+| AI — fallback | Gemini API (free tier) | Used only for low-confidence / stance-complex cases |
+| API | FastAPI | Async, OpenAPI autodocs |
+| YouTube data | Piped (self-hosted) | No API key required, returns search + comments |
+| Scheduling (future) | Apache Airflow | Phase 7, not in MVP |
 
 ---
 
@@ -65,96 +86,156 @@ flowchart LR
 
 ```
 voice/
-├── shared/                     # Code shared by 2+ services
-│   ├── config.py               # Loads .env via pydantic-settings; single source of truth for all env vars
-│   ├── db.py                   # MongoDB and PostgreSQL connection helpers
-│   └── schemas.py              # Shared TypedDicts (RawDocument, ClassifiedDocument)
-├── sources/                    # Plugin-based scrapers
-│   ├── __init__.py             # BaseSource abstract class + imports all plugins so decorators fire on import
-│   ├── registry.py             # @register_source decorator + get_all_sources()
-│   └── news/                   # Category subdirectory — one folder per source type (news, reddit, …)
-│       └── detik.py            # One file per source plugin
 ├── bot/
-│   └── main.py                 # python -m bot.main
-├── api/
-│   └── main.py                 # uvicorn api.main:app
+│   └── main.py                 # Telegram bot — publishes keyword jobs to Redpanda
 ├── worker/
-│   └── main.py                 # python -m worker.main  (Kafka consumer → scraper)
+│   └── main.py                 # Kafka consumer → runs scraper pipeline
 ├── processor/
-│   └── main.py                 # python -m processor.main  (Mongo → Gemini → Postgres)
-├── Dockerfile                  # Single image used by all app services
-├── docker-compose.yml          # Orchestrates infra (Mongo, Postgres, Redpanda) + app services
-├── requirements.txt            # Single shared requirements file (split per-service later if needed)
-├── .env.example
-└── README.md
+│   ├── main.py                 # Cleaner + AI loop (runs every 30s)
+│   ├── cleaner.py              # Mongo → parse per source → PostgreSQL
+│   └── ai.py                   # Sentiment stub (IndoBERT + Gemini, TODO)
+├── sources/
+│   ├── __init__.py             # BaseSource abstract class + plugin imports
+│   ├── registry.py             # @register_source decorator
+│   ├── news/
+│   │   └── detik.py            # Detik source plugin
+│   └── socmed/
+│       └── youtube.py          # YouTube source plugin (via Piped)
+├── shared/
+│   ├── config.py               # pydantic-settings — all config from .env, no hardcoded defaults
+│   ├── kafka/                  # Producer + Consumer wrappers
+│   ├── mongodb/                # Mongo connection + insert/find helpers
+│   ├── postgresql/             # ThreadedConnectionPool + DDL + typed helpers
+│   ├── redys/                  # Valkey client — cache_exists, cache_set, checkpoint
+│   └── utils/
+│       ├── logger.py           # Loguru + stdlib unification via InterceptHandler
+│       ├── monitor.py          # Rich Live progress bars (split or unified panels)
+│       ├── network.py          # Async HTTP with retries
+│       ├── endecode.py         # MD5/SHA hash, base64, XOR cipher, URL encode, etc.
+│       └── search.py           # JMESPath wrapper
+├── docker-compose.yml          # Core infra always-on; broker via --profile redpanda|kafka
+├── requirements.txt
+└── .env.example
 ```
 
-**Source plugin contract** — every source implements three methods and self-registers:
+---
+
+## Source Plugin Contract
+
+Adding a new source = one new file, no changes to the pipeline:
 
 ```python
 from sources import BaseSource
 from sources.registry import register_source
 
-@register_source("detik")
-class DetikSource(BaseSource):
-    def fetch(self, keyword: str) -> list[dict]:
+@register_source("mysource")
+class MySource(BaseSource):
+    async def collect_urls(self, keyword: str, interval: str) -> list[dict]:
+        """Return list of {url, title, media, desc, date} dicts."""
         ...
 
-    def process(self, data: dict, **kwargs) -> list[dict]:
+    async def fetch_detail(self, content: dict) -> dict:
+        """Return content dict with article_id and raw fields added."""
         ...
 
-    def output(self, data: dict, **kwargs) -> None:
+    async def fetch_comments(self, content: dict) -> list[dict]:
+        """Return list of raw API objects (one → one MongoDB document)."""
         ...
 ```
 
-No other file needs to be modified. The pipeline discovers registered sources automatically via `sources/__init__.py`.
+`BaseSource.process()` handles the full orchestration: concurrent detail fetching, Valkey cache checking, MongoDB saves, comment gathering, and progress display.
 
 ---
 
-## Setup & Installation
+## Setup
 
-> **Coming soon.** The project is currently in Phase 0 (setup & foundations). Installation instructions, environment variables, and Docker Compose setup will be added as the implementation progresses.
+### Prerequisites
+
+- Docker Desktop
+- Python 3.11+
+
+### 1. Start infrastructure
+
+```bash
+# Redpanda (default — lightweight, Kafka-compatible)
+docker compose --profile redpanda up -d
+
+# Or Kafka (production-grade)
+docker compose --profile kafka up -d
+
+# Add YouTube support (Piped — requires piped/config.properties)
+docker compose --profile piped up -d
+```
+
+Core services (MongoDB, PostgreSQL, Valkey) always start regardless of profile.
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+# Edit .env with your values
+```
+
+Key variables:
+
+| Variable | Description |
+|---|---|
+| `BROKER_TYPE` | `redpanda` or `kafka` |
+| `REDPANDA_BROKER` | e.g. `localhost:19092` |
+| `MONGO_URI` | MongoDB connection string |
+| `POSTGRES_DSN` | PostgreSQL DSN |
+| `VALKEY_URL` | e.g. `redis://localhost:6379/0` |
+| `PIPED_BASE_URL` | Piped backend URL for YouTube |
+| `GEMINI_API_KEY` | Gemini API free tier key |
+| `TELEGRAM_BOT_TOKEN` | From @BotFather |
+
+### 3. Run services
+
+```bash
+# Scraper worker
+python -m worker.main
+
+# Processor (cleaner + AI)
+python -m processor.main
+
+# Telegram bot
+python -m bot.main
+```
 
 ---
 
 ## Roadmap
 
-| Phase | Name | Description |
-|---|---|---|
-| 0 | Foundation | Project scaffolding, tooling, local dev environment |
-| 1 | Scraping Core | BaseSource interface, plugin registry, first 2–3 source plugins |
-| 2 | Pipeline Integration | Kafka integration, MongoDB storage, end-to-end raw flow |
-| 3 | AI Classification | Gemini-powered sentiment/stance processor, PostgreSQL storage |
-| 4 | API & Bot | FastAPI endpoints, Telegram bot wired to full pipeline |
-| 5 | Hardening | Error handling, retries, monitoring, basic test coverage |
-| 6 | NLP Intent Parsing | Natural-language keyword extraction from bot messages |
-| 7 | Scheduling | Airflow DAGs for periodic keyword re-runs |
+| Phase | Status | Name | Description |
+|---|---|---|---|
+| 0 | ✅ Done | Foundation | Project scaffolding, tooling, local dev environment |
+| 1 | ✅ Done | Scraping Core | BaseSource, plugin registry, Detik + YouTube plugins |
+| 2 | ✅ Done | Pipeline Integration | Redpanda/Kafka, MongoDB datalake, Valkey cache, raw-first flow |
+| 3 | 🔄 In Progress | Cleaning & AI | Cleaner service, IndoBERT + Gemini sentiment processor |
+| 4 | ⏳ Planned | API & Bot | FastAPI endpoints, Telegram bot wired to full pipeline |
+| 5 | ⏳ Planned | Hardening | Retries, observability, basic test coverage |
+| 6 | ⏳ Planned | NLP Intent | Natural-language keyword extraction from bot messages |
+| 7 | ⏳ Planned | Scheduling | Airflow DAGs for periodic keyword re-runs |
+
+**MVP target: 17 Jun – 18 Aug 2026** (Phases 0–4, ~6–10 hrs/week)
 
 ---
 
 ## Ethical Notes
 
-This project collects and analyzes public discourse on potentially sensitive topics. The following principles apply to its design and any public-facing output:
+**Transparency** — Methodology, source list, and classification prompts are versioned and documented so results can be independently scrutinized.
 
-**Transparency of methodology**
-Results are derived from a limited set of sources and a single AI model (Gemini). Methodology, source list, and classification prompts will be documented and versioned so results can be independently scrutinized.
+**Known limitations**
+- Coverage is partial — only no-login-required public sources are scraped
+- AI classification reflects biases in the underlying models and prompt design
+- Results represent *indexed opinion*, not population-representative opinion
 
-**Known limitations and bias**
-- Source coverage is partial by design — only no-login-required public sources are scraped.
-- AI classification reflects the biases present in the underlying model and in the prompt design.
-- Results represent *indexed opinion*, not population-representative opinion.
-- Non-English content may be classified less accurately.
+**Privacy** — No user-identifying information is stored. Author identifiers are dropped before the structured storage stage and are never exposed via the API.
 
-Any output from this system should be interpreted as a signal, not a ground truth.
-
-**Anonymization**
-No user-identifying information is collected or stored. For social media sources (e.g. Reddit), author identifiers are dropped before the structured storage stage and are never exposed through the API.
-
-**No malicious use**
-This system is not designed for, and must not be used for, mass surveillance, targeted harassment, or political manipulation. Scraping respects `robots.txt` and rate limits.
+**Responsible use** — This system must not be used for mass surveillance, targeted harassment, or political manipulation. Scraping respects `robots.txt` and source rate limits.
 
 ---
 
 ## License
 
-> License TBD. Placeholder — a permissive open-source license (e.g. MIT) will be chosen before the project is made public.
+MIT — see [LICENSE](LICENSE)
