@@ -1,28 +1,110 @@
-version: "3.9"
+# Cara run:
+#   Redpanda (default, ringan):  docker compose --profile redpanda up -d
+#   Kafka (alternatif):          docker compose --profile kafka up -d
+#
+# Core services (valkey, postgres, mongodb) selalu jalan tanpa profile.
 
 services:
-  # ── Infrastructure ────────────────────────────────────────────────────────
-
-  mongo:
-    image: mongo:7
+  # ── Cache: anti re-scrape (Redis-protocol compatible) ──────────────
+  valkey:
+    image: valkey/valkey:8
+    container_name: voice-valkey
+    command: valkey-server --appendonly yes
     ports:
-      - "27017:27017"
+      - "6379:6379"
     volumes:
-      - mongo_data:/data/db
+      - valkey_data:/data
+    restart: unless-stopped
 
+  # ── Warehouse: data bersih + hasil sentiment ───────────────────────
   postgres:
     image: postgres:16
+    container_name: voice-postgres
     environment:
       POSTGRES_USER: voice
       POSTGRES_PASSWORD: voice
-      POSTGRES_DB: voice
+      POSTGRES_DB: voice_warehouse
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
 
+  # ── Datalake: raw_documents (article + comment, insert-only) ──────
+  mongodb:
+    image: mongo:7
+    container_name: voice-mongodb
+    # cap WiredTiger cache di 0.5GB biar gak rebut RAM laptop
+    command: mongod --wiredTigerCacheSizeGB 0.5
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: voice
+      MONGO_INITDB_ROOT_PASSWORD: voice
+      MONGO_INITDB_DATABASE: voice_datalake
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  # ══════════════════════════════════════════════════════════════════
+  # REDPANDA — profile: redpanda (default, lebih ringan dari Kafka)
+  # Kafka-API compatible, cocok untuk dev/laptop.
+  # ══════════════════════════════════════════════════════════════════
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v26.1.11
+    container_name: voice-redpanda
+    profiles: ["redpanda"]
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+      - --smp 1
+      - --default-log-level=info
+    ports:
+      - "19092:19092" # Kafka API (dari host)
+      - "18081:18081" # Schema registry
+      - "18082:18082" # Pandaproxy (REST)
+      - "19644:9644" # Admin API
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    restart: unless-stopped
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.8.16
+    container_name: voice-redpanda-console
+    profiles: ["redpanda"]
+    entrypoint: /bin/sh
+    command: -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml; /app/console'
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda:9644"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redpanda
+    restart: unless-stopped
+
+  # ══════════════════════════════════════════════════════════════════
+  # KAFKA — profile: kafka (alternatif, lebih berat tapi production-grade)
+  # Gunakan kalau butuh ekosistem Kafka penuh (Connect, Streams, dll).
+  # ══════════════════════════════════════════════════════════════════
   kafka:
     image: confluentinc/cp-kafka:7.6.1
+    container_name: voice-kafka
+    profiles: ["kafka"]
     ports:
       - "9092:9092"
     environment:
@@ -36,56 +118,38 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    restart: unless-stopped
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
+    container_name: voice-kafka-ui
+    profiles: ["kafka"]
     ports:
-      - "8080:8080"
+      - "8081:8080" # 8081 biar tidak bentrok dengan redpanda-console di 8080
     depends_on:
       - kafka
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    restart: unless-stopped
 
-  # ── App services ──────────────────────────────────────────────────────────
-
-  bot:
-    build: .
-    command: python -m bot.main
-    env_file: .env
-    depends_on:
-      - kafka
-    restart: on-failure
-
-  api:
-    build: .
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-    env_file: .env
+  piped-backend:
+    image: 1337kavin/piped:latest
+    container_name: voice-piped
+    profiles: ["piped"]
     ports:
-      - "8000:8000"
+      - "8888:8080"
+    volumes:
+      - ./piped/config.properties:/app/config.properties:ro
     depends_on:
       - postgres
-      - mongo
-    restart: on-failure
-
-  worker:
-    build: .
-    command: python -m worker.main
-    env_file: .env
-    depends_on:
-      - kafka
-      - mongo
-    restart: on-failure
-
-  processor:
-    build: .
-    command: python -m processor.main
-    env_file: .env
-    depends_on:
-      - mongo
-      - postgres
-    restart: on-failure
+    restart: unless-stopped
 
 volumes:
-  mongo_data:
+  valkey_data:
   postgres_data:
+  mongo_data:
+  redpanda_data:
+  kafka_data:

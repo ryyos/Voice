@@ -1,220 +1,218 @@
-import pandas as pd
-import settings
-import json
+from __future__ import annotations
 
-from sqlalchemy import text, inspect
-from typing import Union
-from valkyt.utils import File, Time
-from .connection import PostgresConnections
-from sqlalchemy.dialects.postgresql import insert
-from loguru import logger
-from icecream import ic
+from contextlib import contextmanager
+from typing import Any, Generator
 
-class _PGProxy:
-    """Proxy yang mengarahkan semua method PG ke engine koneksi tertentu."""
+import psycopg2
+from psycopg2.extras import execute_values, RealDictCursor
 
-    def __init__(self, name: str, engine: PostgresConnections):
-        self._name    = name
-        self._engine  = engine
+from shared.config import settings
+from shared.utils.logger import log
+from .connection import PGConnection
 
-    def write(self, data, table_name, **kwargs):
-        return PG._write(self._engine, data, table_name, **kwargs)
+# ── DDL — tables created on first run ────────────────────────────────────────
 
-    def read(self, table_name, fields=None, filters=None, schema=None):
-        return PG._read(self._engine, table_name, fields, filters, schema)
+_DDL = """
+CREATE TABLE IF NOT EXISTS contents (
+    id          BIGSERIAL PRIMARY KEY,
+    source_id   TEXT        NOT NULL,
+    source      TEXT        NOT NULL,
+    keyword     TEXT        NOT NULL,
+    url         TEXT,
+    article_id  TEXT,
+    title       TEXT,
+    author      TEXT,
+    media       TEXT,
+    content     TEXT,
+    published_at TEXT,
+    mongo_id    TEXT,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (source, source_id)
+);
 
-    def iterate(self, table_name, fields=None, filters=None, schema=None, chunk_size=1000):
-        return PG._iterate(self._engine, table_name, fields, filters, schema, chunk_size)
-
-    def update(self, table_name, set_data, where, schema=None):
-        return PG._update(self._engine, table_name, set_data, where, schema)
-
-    def get_columns(self, table_name, schema=None):
-        return PG._get_columns(self._engine, table_name, schema)
-
-    def close(self):
-        self._engine._engine.dispose()
-        logger.success(f"[ POSTGRESQL:{self._name} ] CONNECTION CLOSED")
+CREATE TABLE IF NOT EXISTS comments (
+    id              BIGSERIAL PRIMARY KEY,
+    source_id       TEXT        NOT NULL,
+    source          TEXT        NOT NULL,
+    keyword         TEXT        NOT NULL,
+    article_id      TEXT,
+    content_url     TEXT,
+    mongo_parent_id TEXT,
+    mongo_id        TEXT,
+    author          TEXT,
+    content         TEXT,
+    prokontra       TEXT,
+    published_at    TEXT,
+    sentiment       TEXT,
+    engine          TEXT,
+    confidence      FLOAT,
+    ai_processed    BOOLEAN     DEFAULT FALSE,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (source, source_id)
+);
+"""
 
 
 class PG:
-    _registry: dict[str, PostgresConnections] = {}
+    """
+    PostgreSQL warehouse client — mirrors the Mongo class pattern.
+
+    Usage:
+        PG.ensure_tables()
+        PG.insert_content({...})
+        PG.insert_comments([{...}, ...])
+        PG.update_sentiment(source_id="123", source="detik", sentiment="positive", engine="indobert", confidence=0.92)
+        rows = PG.fetchall("SELECT * FROM comments WHERE ai_processed = false LIMIT 100")
+    """
+
+    _conn: PGConnection | None = None
 
     @classmethod
-    def _get_default_engine(cls) -> PostgresConnections:
-        if "default" not in cls._registry:
-            logger.debug("[ POSTGRESQL:default ] CREATE NEW POOL")
-            cls._registry["default"] = PostgresConnections()
-        return cls._registry["default"]
+    def _get(cls) -> PGConnection:
+        if cls._conn is None:
+            cls._conn = PGConnection(settings.postgres_dsn)
+        return cls._conn
 
     @classmethod
-    def __class_getitem__(cls, name: str) -> _PGProxy:
-        if name not in cls._registry:
-            config = settings.POSTGRESQL_CONNECTIONS.get(name)
-            if not config:
-                raise KeyError(f"[ POSTGRESQL ] no connection named '{name}' found in settings.POSTGRESQL_CONNECTIONS")
-            logger.debug(f"[ POSTGRESQL:{name} ] CREATE NEW POOL")
-            cls._registry[name] = PostgresConnections(config)
-        return _PGProxy(name, cls._registry[name])
+    @contextmanager
+    def _cursor(cls) -> Generator:
+        conn = cls._get().get()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                yield cur
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cls._get().put(conn)
 
-    def __new__(cls):
-        cls._get_default_engine()
-        ...
-    
-    # ── public classmethods (default connection) ─────────────────────────────
-
-    @classmethod
-    def write(cls, data: Union[dict, list], table_name: str, **kwargs) -> None:
-        cls._write(cls._get_default_engine(), data, table_name, **kwargs)
+    # ------------------------------------------------------------------
+    # Schema
+    # ------------------------------------------------------------------
 
     @classmethod
-    def get_columns(cls, table_name: str, schema: str = None) -> dict:
-        return cls._get_columns(cls._get_default_engine(), table_name, schema)
+    def ensure_tables(cls) -> None:
+        """Create tables if they don't exist. Safe to call on every startup."""
+        with cls._cursor() as cur:
+            cur.execute(_DDL)
+        log.info("[ POSTGRESQL ] tables ensured")
+
+    # ------------------------------------------------------------------
+    # Write
+    # ------------------------------------------------------------------
 
     @classmethod
-    def read(cls, table_name: str, fields=None, filters=None, schema=None) -> list[dict]:
-        return cls._read(cls._get_default_engine(), table_name, fields, filters, schema)
+    def insert_content(cls, data: dict) -> bool:
+        """Insert one content row. Silently skips on duplicate (source, source_id)."""
+        sql = """
+            INSERT INTO contents
+                (source_id, source, keyword, url, article_id, title, author,
+                 media, content, published_at, mongo_id)
+            VALUES
+                (%(source_id)s, %(source)s, %(keyword)s, %(url)s, %(article_id)s,
+                 %(title)s, %(author)s, %(media)s, %(content)s, %(published_at)s,
+                 %(mongo_id)s)
+            ON CONFLICT (source, source_id) DO NOTHING
+        """
+        try:
+            with cls._cursor() as cur:
+                cur.execute(sql, data)
+                inserted = cur.rowcount > 0
+            if inserted:
+                log.debug("[ POSTGRESQL ] content inserted → {}", data.get("source_id"))
+            return inserted
+        except Exception as e:
+            log.error("[ POSTGRESQL ] insert_content failed → {}", e)
+            return False
 
     @classmethod
-    def iterate(cls, table_name: str, fields=None, filters=None, schema=None, chunk_size=1000):
-        return cls._iterate(cls._get_default_engine(), table_name, fields, filters, schema, chunk_size)
-
-    @classmethod
-    def update(cls, table_name: str, set_data: dict, where: dict, schema=None) -> int:
-        return cls._update(cls._get_default_engine(), table_name, set_data, where, schema)
-
-    @classmethod
-    def close(cls, name: str = "default"):
-        if engine := cls._registry.pop(name, None):
-            engine._engine.dispose()
-            logger.success(f"[ POSTGRESQL:{name} ] CONNECTION CLOSED")
-
-    # ── internal implementations (menerima engine eksplisit) ─────────────────
-
-    @staticmethod
-    def _write(engine: PostgresConnections, data: Union[dict, list], table_name: str, **kwargs) -> None:
-        if not isinstance(data, list):
-            data = [data]
-
-        df = pd.DataFrame(data).drop_duplicates(subset=["id"], keep="last")
-        with engine._engine.begin() as conn:
-            if (_c := df.to_sql(
-                table_name,
-                con=conn,
-                schema=sc if (sc := kwargs.get("schema")) else settings.SCHEMA["default"],
-                if_exists="append",
-                index=False,
-                method=PG._conflict_do_update,
-            )):
-                logger.success(f"[ {str(data)[:50]} ] SUCCESS SEND TO POSTGRESQL :: [ {str(_c)} ]")
-            else:
-                logger.success(f"[ {str(data)[:50]} ] ALREDY EXISTS")
-
-    @staticmethod
-    def _get_columns(engine: PostgresConnections, table_name: str, schema: str = None) -> dict:
-        def _normalize_type(col_type: str) -> str:
-            t = col_type.lower()
-            if "int" in t:                                          return "integer"
-            elif "char" in t or "text" in t:                       return "string"
-            elif "bool" in t:                                       return "boolean"
-            elif "double" in t or "float" in t or "numeric" in t or "real" in t: return "float"
-            elif "date" in t or "time" in t:                       return "datetime"
-            elif "array" in t:                                      return "array"
-            elif "json" in t:                                       return "json"
-            return "string"
-
-        schema = schema or settings.SCHEMA["default"]
-        columns = inspect(engine._engine).get_columns(table_name, schema=schema)
-        return {col["name"]: _normalize_type(str(col["type"])) for col in columns}
-
-    @staticmethod
-    def _read(engine: PostgresConnections, table_name: str, fields=None, filters=None, schema=None) -> list[dict]:
-        schema        = schema or settings.SCHEMA["default"]
-        select_fields = ", ".join(fields) if fields else "*"
-        where_clause, params = "", {}
-
-        if filters:
-            where_clause = " WHERE " + " AND ".join(f"{k} = :{k}" for k in filters)
-            params = filters
-
-        query = f"SELECT {select_fields} FROM {schema}.{table_name} {where_clause}"
-        with engine._engine.begin() as conn:
-            return [dict(row) for row in conn.execute(text(query), params).mappings().all()]
-
-    @staticmethod
-    def _iterate(engine: PostgresConnections, table_name: str, fields=None, filters=None, schema=None, chunk_size=1000):
-        schema = schema or settings.SCHEMA["default"]
-
-        with engine._engine.connect().execution_options(stream_results=True) as conn:
-            columns = conn.execute(text("""
-                SELECT column_name, udt_name
-                FROM information_schema.columns
-                WHERE table_schema = :schema AND table_name = :table_name
-                ORDER BY ordinal_position
-            """), {"schema": schema, "table_name": table_name}).mappings().all()
-
-            geometry_columns = {col["column_name"] for col in columns if col["udt_name"] in ("geometry", "geography")}
-            selected_columns = [col for col in columns if col["column_name"] in fields] if fields else columns
-
-            select_fields = ", ".join(
-                f"ST_AsGeoJSON({col['column_name']}) AS {col['column_name']}"
-                if col["column_name"] in geometry_columns else col["column_name"]
-                for col in selected_columns
+    def insert_comments(cls, rows: list[dict]) -> int:
+        """Batch-insert comments. Skips duplicates. Returns number actually inserted."""
+        if not rows:
+            return 0
+        sql = """
+            INSERT INTO comments
+                (source_id, source, keyword, article_id, content_url,
+                 mongo_parent_id, mongo_id, author, content, prokontra, published_at)
+            VALUES %s
+            ON CONFLICT (source, source_id) DO NOTHING
+        """
+        values = [
+            (
+                r["source_id"], r["source"], r["keyword"], r.get("article_id"),
+                r.get("content_url"), r.get("mongo_parent_id"), r.get("mongo_id"),
+                r.get("author"), r.get("content"), r.get("prokontra"),
+                r.get("published_at"),
             )
+            for r in rows
+        ]
+        try:
+            with cls._cursor() as cur:
+                execute_values(cur, sql, values)
+                count = cur.rowcount
+            log.info("[ POSTGRESQL ] comments inserted → {}", count)
+            return count
+        except Exception as e:
+            log.error("[ POSTGRESQL ] insert_comments failed → {}", e)
+            return 0
 
-            where_clause, params = "", {}
-            if filters:
-                where_clause = " WHERE " + " AND ".join(f"{k} = :{k}" for k in filters)
-                params = filters
+    @classmethod
+    def update_sentiment(
+        cls,
+        *,
+        source_id: str,
+        source: str,
+        sentiment: str,
+        engine: str,
+        confidence: float,
+    ) -> bool:
+        sql = """
+            UPDATE comments
+            SET sentiment = %s, engine = %s, confidence = %s, ai_processed = TRUE
+            WHERE source = %s AND source_id = %s
+        """
+        try:
+            with cls._cursor() as cur:
+                cur.execute(sql, (sentiment, engine, confidence, source, source_id))
+                updated = cur.rowcount > 0
+            log.debug("[ POSTGRESQL ] sentiment updated → {} {}", source, source_id)
+            return updated
+        except Exception as e:
+            log.error("[ POSTGRESQL ] update_sentiment failed → {}", e)
+            return False
 
-            logger.debug(f"[ POSTGRESQL ] STREAM START | table={schema}.{table_name} | filters={filters} | chunk_size={chunk_size}")
+    # ------------------------------------------------------------------
+    # Read
+    # ------------------------------------------------------------------
 
-            count = 0
-            for row in conn.execute(text(f"SELECT {select_fields} FROM {schema}.{table_name} {where_clause}"), params).mappings().yield_per(chunk_size):
-                count += 1
-                data = dict(row)
-                for col in geometry_columns:
-                    if col in data and data[col]:
-                        data[col] = json.loads(data[col])
-                logger.debug(f"[ POSTGRESQL ] STREAM COUNT | [ {count} ]")
-                yield data
+    @classmethod
+    def fetchall(cls, sql: str, params: tuple | dict | None = None) -> list[dict]:
+        try:
+            with cls._cursor() as cur:
+                cur.execute(sql, params)
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            log.error("[ POSTGRESQL ] fetchall failed → {}", e)
+            return []
 
-            logger.success(f"[ POSTGRESQL ] STREAM COMPLETE | table={schema}.{table_name} | total_rows={count}")
+    @classmethod
+    def fetchone(cls, sql: str, params: tuple | dict | None = None) -> dict | None:
+        try:
+            with cls._cursor() as cur:
+                cur.execute(sql, params)
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            log.error("[ POSTGRESQL ] fetchone failed → {}", e)
+            return None
 
-    @staticmethod
-    def _update(engine: PostgresConnections, table_name: str, set_data: dict, where: dict, schema=None) -> int:
-        if not where:
-            raise ValueError("updates without a WHERE clause are not permitted.")
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
-        schema, set_clause, params = schema or settings.SCHEMA["default"], [], {}
-
-        for k, v in set_data.items():
-            if "coordinate" in k:
-                set_clause.append(f"{k} = ST_SetSRID(ST_MakePoint({v['lon']}, {v['lat']}), 4326)")
-            else:
-                set_clause.append(f"{k} = :set_{k}")
-                params[f"set_{k}"] = v
-
-        where_clause = [f"{k} = :where_{k}" for k in where]
-        params.update({f"where_{k}": v for k, v in where.items()})
-
-        query = f"UPDATE {schema}.{table_name} SET {', '.join(set_clause)} WHERE {' AND '.join(where_clause)}"
-        with engine._engine.begin() as conn:
-            result = conn.execute(text(query), params)
-            logger.success(f"item succes updated :: [ {where['id']} ]")
-            return result.rowcount
-            
-    @staticmethod
-    def _conflict_do_update(table, conn, keys, data_iter):
-        data = [dict(zip(keys, row)) for row in data_iter]
-        
-        insert_statement = insert(table.table).values(data)
-        conflict_update = insert_statement.on_conflict_do_update(
-            constraint=f"{table.table.name}_pkey",
-            set_={column.key: column for column in insert_statement.excluded},
-        )
-        result = conn.execute(conflict_update)
-        if result.rowcount < len(data):            
-            File.write_json(f"duplicate/{data[0]['id']}_{Time.epoch_ms()}.json", data)
-            logger.debug(f"DATA IS DUPLICATE :: [ {data[0]['id']} ]")
-        return result.rowcount
+    @classmethod
+    def close(cls) -> None:
+        if cls._conn:
+            cls._conn.close()
+            cls._conn = None

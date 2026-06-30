@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Suara — monitor opini publik</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#12151A;
+    --surface:#1B1F26;
+    --surface-2:#232830;
+    --border:#2E343D;
+    --border-soft:#262B33;
+    --text-primary:#EDEEF0;
+    --text-secondary:#9DA3AE;
+    --text-muted:#666D78;
+    --accent:#E8A33D;
+    --accent-ink:#2B1B02;
+    --positive:#4FAE7C;
+    --positive-bg:rgba(79,174,124,0.14);
+    --negative:#E2574C;
+    --negative-bg:rgba(226,87,76,0.14);
+    --neutral:#9DA3AE;
+    --neutral-bg:rgba(157,163,174,0.12);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text-primary);
+    font-family:'IBM Plex Sans', sans-serif;
+    line-height:1.6;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:2.5rem 1.5rem 4rem;}
+  .mono{font-family:'IBM Plex Mono', monospace;}
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin:0 0 10px;
+  }
+  h1, h2, h3{font-family:'Space Grotesk', sans-serif; font-weight:600; margin:0;}
+
+  .topbar{display:flex; justify-content:space-between; align-items:center; margin-bottom:3rem;}
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand-mark{
+    width:28px; height:28px; border-radius:6px; background:var(--accent);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:14px; color:var(--accent-ink);
+  }
+  .brand-name{font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:16px; letter-spacing:0.01em;}
+  .topbar-meta{font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--text-muted);}
+
+  .hero h1{font-size:32px; line-height:1.25; max-width:680px; margin-bottom:14px;}
+  .hero h1 .hl{color:var(--accent);}
+  .hero p.finding{color:var(--text-secondary); font-size:15px; max-width:600px; margin:0 0 28px;}
+
+  .console{
+    display:flex; gap:8px; background:var(--surface); border:1px solid var(--border);
+    border-radius:10px; padding:8px; margin-bottom:10px;
+  }
+  .console input[type=text]{
+    flex:1; background:transparent; border:none; outline:none;
+    color:var(--text-primary); font-family:'IBM Plex Mono', monospace; font-size:14px;
+    padding:8px 10px;
+  }
+  .console input[type=text]::placeholder{color:var(--text-muted);}
+  .console select{
+    background:var(--surface-2); border:1px solid var(--border-soft); border-radius:8px;
+    color:var(--text-secondary); font-family:'IBM Plex Mono', monospace; font-size:13px;
+    padding:0 10px;
+  }
+  .console button{
+    background:var(--accent); border:none; border-radius:8px; color:var(--accent-ink);
+    font-family:'IBM Plex Sans', sans-serif; font-weight:500; font-size:14px;
+    padding:0 18px; cursor:pointer; transition:opacity .15s;
+  }
+  .console button:hover{opacity:0.88;}
+  .console *:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+  .endpoint{
+    font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--text-muted);
+    background:var(--surface); border:1px solid var(--border-soft); border-radius:8px;
+    padding:10px 14px; margin-bottom:2.5rem; overflow-x:auto; white-space:nowrap;
+  }
+  .endpoint .verb{color:var(--positive); margin-right:8px;}
+
+  section{margin-bottom:2.5rem;}
+  section .label-row{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:14px;}
+  .section-label{font-family:'IBM Plex Mono', monospace; font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-muted);}
+
+  .metrics{display:grid; grid-template-columns:repeat(4, 1fr); gap:10px;}
+  .metric{background:var(--surface); border:1px solid var(--border-soft); border-radius:10px; padding:16px 18px;}
+  .metric .m-label{font-size:13px; color:var(--text-secondary); margin-bottom:6px;}
+  .metric .m-value{font-family:'Space Grotesk', sans-serif; font-size:26px; font-weight:600;}
+  .metric.pos .m-value{color:var(--positive);}
+  .metric.neg .m-value{color:var(--negative);}
+
+  .dist-bar{display:flex; height:10px; border-radius:6px; overflow:hidden; margin-bottom:10px;}
+  .legend{display:flex; gap:18px; font-size:13px; color:var(--text-secondary);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .dot{width:8px; height:8px; border-radius:50%; display:inline-block;}
+
+  .signal-card{background:var(--surface); border:1px solid var(--border-soft); border-radius:10px; padding:18px 20px 12px;}
+  .signal-card svg{width:100%; height:84px; display:block;}
+  .signal-footer{display:flex; justify-content:space-between; font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--text-muted); margin-top:6px;}
+
+  .word-cols{display:grid; grid-template-columns:1fr 1fr; gap:28px;}
+  .word-col-title{font-size:13px; font-weight:500; margin:0 0 12px;}
+  .word-col-title.neg{color:var(--negative);}
+  .word-col-title.pos{color:var(--positive);}
+  .word-row{display:flex; align-items:center; gap:10px; margin-bottom:9px;}
+  .word-row .w-label{width:92px; font-size:13px; flex-shrink:0; white-space:nowrap;}
+  .word-row .w-track{flex:1; height:6px; background:var(--surface-2); border-radius:3px; overflow:hidden;}
+  .word-row .w-fill{height:100%; border-radius:3px;}
+  .word-row .w-count{font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--text-muted); width:28px; text-align:right; flex-shrink:0;}
+
+  .sources{display:grid; grid-template-columns:repeat(2, 1fr); gap:10px;}
+  .source-row{
+    display:flex; justify-content:space-between; align-items:center;
+    border:1px solid var(--border-soft); border-radius:10px; padding:12px 14px; background:var(--surface);
+  }
+  .source-row .src-name{display:flex; align-items:center; gap:10px; font-size:13.5px;}
+  .source-row .src-count{font-family:'IBM Plex Mono', monospace; color:var(--text-secondary); font-size:13px;}
+  .icon{width:16px; height:16px; flex-shrink:0; color:var(--text-muted);}
+  .tag{
+    font-family:'IBM Plex Mono', monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:0.04em;
+    padding:2px 6px; border-radius:4px; background:var(--surface-2); color:var(--text-muted);
+  }
+
+  .filters{display:flex; gap:6px;}
+  .filters button{
+    font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--text-secondary);
+    background:var(--surface); border:1px solid var(--border-soft); border-radius:7px;
+    padding:6px 12px; cursor:pointer; transition:.15s;
+  }
+  .filters button.active{background:var(--accent); color:var(--accent-ink); border-color:var(--accent);}
+  .filters button:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+
+  #feed{display:flex; flex-direction:column; gap:8px;}
+  .item{border:1px solid var(--border-soft); border-radius:10px; padding:13px 16px; background:var(--surface);}
+  .item .meta-row{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:10px;}
+  .item .meta-left{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-secondary); flex-wrap:wrap;}
+  .item .parent-link{font-size:11.5px; color:var(--text-muted); margin:0 0 6px; font-style:italic;}
+  .item p.body-text{margin:0; font-size:14px; color:var(--text-primary);}
+  .item.article{opacity:0.82;}
+  .badge{font-size:11.5px; padding:3px 9px; border-radius:6px; font-family:'IBM Plex Mono', monospace; white-space:nowrap;}
+  .badge.pos{background:var(--positive-bg); color:var(--positive);}
+  .badge.neg{background:var(--negative-bg); color:var(--negative);}
+  .badge.ctx{background:var(--surface-2); color:var(--text-muted);}
+  .engine-tag{font-size:10.5px; color:var(--text-muted); font-family:'IBM Plex Mono', monospace;}
+
+  footer{border-top:1px solid var(--border-soft); padding-top:1.5rem; margin-top:3rem;}
+  footer p{font-size:12px; color:var(--text-muted); margin:0 0 6px; line-height:1.7;}
+
+  @media (max-width:640px){
+    .metrics{grid-template-columns:repeat(2,1fr);}
+    .sources{grid-template-columns:1fr;}
+    .word-cols{grid-template-columns:1fr; gap:18px;}
+    .console{flex-wrap:wrap;}
+    .console select{flex:1;}
+    .hero h1{font-size:26px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">S</div>
+      <div class="brand-name">Suara</div>
+    </div>
+    <div class="topbar-meta">opini publik &middot; live monitor</div>
+  </div>
+
+  <div class="hero">
+    <p class="eyebrow">Memantau</p>
+    <h1>Opini publik soal <span class="hl">&ldquo;makan bergizi gratis&rdquo;</span> sedang condong negatif.</h1>
+    <p class="finding">Dari 1.842 opini yang masuk dalam 30 hari terakhir, 41% bernada negatif, 38% positif &mdash; perbedaan yang menyempit dibanding bulan lalu.</p>
+
+    <div class="console">
+      <input type="text" value="makan bergizi gratis" aria-label="Kata kunci pencarian">
+      <select aria-label="Rentang waktu">
+        <option>30 hari terakhir</option>
+        <option>7 hari terakhir</option>
+        <option>90 hari terakhir</option>
+      </select>
+      <button type="button">Cari</button>
+    </div>
+    <div class="endpoint"><span class="verb">GET</span>/opinions?keyword=makan+bergizi+gratis&amp;date_range=30d</div>
+  </div>
+
+  <section>
+    <div class="metrics">
+      <div class="metric"><div class="m-label">Total opini</div><div class="m-value">1.842</div></div>
+      <div class="metric pos"><div class="m-label">Positif</div><div class="m-value">38%</div></div>
+      <div class="metric neg"><div class="m-label">Negatif</div><div class="m-value">41%</div></div>
+      <div class="metric"><div class="m-label">Netral</div><div class="m-value">21%</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="label-row"><span class="section-label">Distribusi sentimen</span></div>
+    <div class="dist-bar">
+      <div style="width:38%; background:var(--positive);"></div>
+      <div style="width:41%; background:var(--negative);"></div>
+      <div style="width:21%; background:var(--neutral);"></div>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--positive);"></span>Positif</span>
+      <span><span class="dot" style="background:var(--negative);"></span>Negatif</span>
+      <span><span class="dot" style="background:var(--neutral);"></span>Netral</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="label-row"><span class="section-label">Sinyal harian &mdash; volume &amp; sentimen dominan</span></div>
+    <div class="signal-card">
+      <svg viewBox="0 0 600 84" preserveAspectRatio="none" role="img" aria-label="Grafik tren volume dan sentimen dominan harian"></svg>
+      <div class="signal-footer"><span>17 Mei</span><span>16 Jun</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="label-row"><span class="section-label">Kata yang sering muncul &mdash; per sentimen</span></div>
+    <div class="word-cols">
+      <div>
+        <p class="word-col-title neg">Di opini negatif</p>
+        <div class="word-row"><span class="w-label">kualitas</span><div class="w-track"><div class="w-fill" style="width:100%; background:var(--negative);"></div></div><span class="w-count">142</span></div>
+        <div class="word-row"><span class="w-label">merata</span><div class="w-track"><div class="w-fill" style="width:69%; background:var(--negative);"></div></div><span class="w-count">98</span></div>
+        <div class="word-row"><span class="w-label">telat</span><div class="w-track"><div class="w-fill" style="width:54%; background:var(--negative);"></div></div><span class="w-count">76</span></div>
+        <div class="word-row"><span class="w-label">antrian</span><div class="w-track"><div class="w-fill" style="width:43%; background:var(--negative);"></div></div><span class="w-count">61</span></div>
+        <div class="word-row"><span class="w-label">menu</span><div class="w-track"><div class="w-fill" style="width:38%; background:var(--negative);"></div></div><span class="w-count">54</span></div>
+      </div>
+      <div>
+        <p class="word-col-title pos">Di opini positif</p>
+        <div class="word-row"><span class="w-label">sayur</span><div class="w-track"><div class="w-fill" style="width:100%; background:var(--positive);"></div></div><span class="w-count">89</span></div>
+        <div class="word-row"><span class="w-label">membantu</span><div class="w-track"><div class="w-fill" style="width:83%; background:var(--positive);"></div></div><span class="w-count">74</span></div>
+        <div class="word-row"><span class="w-label">konsentrasi</span><div class="w-track"><div class="w-fill" style="width:65%; background:var(--positive);"></div></div><span class="w-count">58</span></div>
+        <div class="word-row"><span class="w-label">rutin</span><div class="w-track"><div class="w-fill" style="width:58%; background:var(--positive);"></div></div><span class="w-count">52</span></div>
+        <div class="word-row"><span class="w-label">semangat</span><div class="w-track"><div class="w-fill" style="width:51%; background:var(--positive);"></div></div><span class="w-count">45</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="label-row"><span class="section-label">Sumber data</span></div>
+    <div class="sources">
+      <div class="source-row">
+        <span class="src-name">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>
+          Detik &middot; artikel <span class="tag">konteks</span>
+        </span>
+        <span class="src-count">312</span>
+      </div>
+      <div class="source-row">
+        <span class="src-name">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 11.5a8.5 8.5 0 1 1-3.8-7.1L21 3l-1.2 4.1a8.5 8.5 0 0 1 1.2 4.4Z"/></svg>
+          Komentar Detik <span class="tag">opini</span>
+        </span>
+        <span class="src-count">684</span>
+      </div>
+      <div class="source-row">
+        <span class="src-name">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>
+          Kompas &middot; artikel <span class="tag">konteks</span>
+        </span>
+        <span class="src-count">267</span>
+      </div>
+      <div class="source-row">
+        <span class="src-name">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="13" r="4"/><path d="M9 7h.01M15 7h.01"/></svg>
+          Reddit <span class="tag">opini</span>
+        </span>
+        <span class="src-count">579</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="label-row">
+      <span class="section-label">Daftar opini</span>
+      <div class="filters" id="filters">
+        <button data-f="all" class="active">Semua</button>
+        <button data-f="opini">Opini</button>
+        <button data-f="artikel">Konteks</button>
+      </div>
+    </div>
+    <div id="feed"></div>
+  </section>
+
+  <footer>
+    <p>Sentimen diukur otomatis dari sample data publik &mdash; model lokal IndoBERT untuk klasifikasi massal, fallback ke Gemini untuk kasus low-confidence atau sarkasme. Badan artikel berita ditandai sebagai konteks dan tidak diberi label sentimen; setiap komentar dan postingan tetap dihitung sebagai opini individual, tidak digabung menjadi satu skor per artikel/postingan.</p>
+    <p>Bukan representasi resmi opini publik. Ukuran sampel dan bias sumber/model dapat memengaruhi hasil.</p>
+  </footer>
+
+</div>
+
+<script>
+  const trend = [
+    {v:8,s:'pos'},{v:12,s:'neg'},{v:10,s:'neg'},{v:15,s:'pos'},{v:9,s:'neu'},
+    {v:18,s:'neg'},{v:14,s:'pos'},{v:11,s:'neg'},{v:16,s:'pos'},{v:13,s:'neg'},
+    {v:20,s:'neg'},{v:17,s:'pos'},{v:10,s:'neu'},{v:22,s:'neg'},{v:15,s:'pos'}
+  ];
+  const colors = {pos:'#4FAE7C', neg:'#E2574C', neu:'#9DA3AE'};
+  const svg = document.querySelector('.signal-card svg');
+  const w = 600, h = 84, n = trend.length, step = w / n;
+  const maxV = Math.max(...trend.map(d => d.v));
+  const pts = trend.map((d, i) => {
+    const x = step * i + step / 2;
+    const y = h - 10 - (d.v / maxV) * (h - 20);
+    return {x, y, ...d};
+  });
+
+  let bars = '';
+  pts.forEach((p, i) => {
+    const barH = (p.v / maxV) * (h - 20);
+    bars += `<rect x="${i*step+1}" y="${h-10-barH}" width="${step-2}" height="${barH}" fill="${colors[p.s]}" opacity="0.16" rx="1.5"></rect>`;
+  });
+
+  const linePath = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+  const dots = pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.4" fill="${colors[p.s]}"></circle>`).join('');
+
+  svg.innerHTML = bars +
+    `<line x1="0" y1="${h-9}" x2="${w}" y2="${h-9}" stroke="#2E343D" stroke-width="1"></line>` +
+    `<path d="${linePath}" fill="none" stroke="#EDEEF0" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"></path>` +
+    dots;
+
+  const feedItems = [
+    {type:'comment', platform:'Komentar Detik', date:'16 Jun', sentiment:'neg', engine:'lokal', parent:'Artikel Detik: "Pemerintah perluas program ke 120 daerah baru"', text:'Programnya bagus niatnya, tapi pelaksanaan di sekolah saya masih banyak yang kurang merata.'},
+    {type:'post', platform:'Reddit', date:'15 Jun', sentiment:'pos', engine:'lokal', text:'Anak saya jadi makan sayur tiap hari, ini sebenarnya progress positif menurut saya.'},
+    {type:'article', platform:'Detik', date:'15 Jun', text:'Pemerintah mengumumkan perluasan program ke 120 daerah baru mulai bulan depan.'},
+    {type:'comment', platform:'Komentar Kompas', date:'14 Jun', sentiment:'neg', engine:'gemini', parent:'Artikel Kompas: "Anggaran program naik 18% kuartal ini"', text:'Katanya gratis tapi kok kualitasnya gini, mending dikasih uang aja langsung deh ya kan.'},
+    {type:'comment', platform:'Reddit', date:'13 Jun', sentiment:'pos', engine:'lokal', parent:'Postingan: "Update dari guru SD soal program ini"', text:'Sebagai guru, aku lihat langsung dampaknya ke konsentrasi belajar anak-anak, lumayan kerasa.'},
+    {type:'article', platform:'Kompas', date:'12 Jun', text:'Anggaran program tercatat naik 18% dibanding kuartal sebelumnya, menurut data Kemenkeu.'}
+  ];
+
+  const sentLabel = {pos:'Positif', neg:'Negatif'};
+
+  function iconFor(type){
+    if(type === 'article') return '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>';
+    return '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 11.5a8.5 8.5 0 1 1-3.8-7.1L21 3l-1.2 4.1a8.5 8.5 0 0 1 1.2 4.4Z"/></svg>';
+  }
+
+  function renderFeed(filter){
+    const items = feedItems.filter(i => filter === 'all' || (filter === 'opini' ? i.type !== 'article' : i.type === 'article'));
+    document.getElementById('feed').innerHTML = items.map(i => `
+      <div class="item ${i.type === 'article' ? 'article' : ''}">
+        <div class="meta-row">
+          <span class="meta-left">
+            ${iconFor(i.type)}
+            <span>${i.platform}</span>
+            <span>&middot;</span>
+            <span>${i.date}</span>
+            <span class="tag">${i.type === 'article' ? 'konteks' : 'opini'}</span>
+          </span>
+          ${i.type === 'article'
+            ? '<span class="badge ctx">tidak dianalisis</span>'
+            : `<span style="display:flex; align-items:center; gap:8px;">${i.engine ? `<span class="engine-tag">${i.engine}</span>` : ''}<span class="badge ${i.sentiment}">${sentLabel[i.sentiment]}</span></span>`}
+        </div>
+        ${i.parent ? `<p class="parent-link">↳ balasan untuk: ${i.parent}</p>` : ''}
+        <p class="body-text">${i.text}</p>
+      </div>
+    `).join('');
+  }
+  renderFeed('all');
+
+  document.getElementById('filters').addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if(!btn) return;
+    document.querySelectorAll('#filters button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderFeed(btn.dataset.f);
+  });
+</script>
+</body>
+</html>

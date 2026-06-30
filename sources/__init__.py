@@ -3,9 +3,10 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pyquery import PyQuery
 
-from shared.utils import File
-from shared.utils.monitor import ProcessMonitor
+from shared.config import settings
+from shared.utils import ProcessMonitor, Endecode
 from shared.mongodb.functions import Mongo
+from shared.redys import Redys
 
 
 class BaseSource(ABC):
@@ -13,32 +14,41 @@ class BaseSource(ABC):
     Base class for all scraper plugins.
 
     Subclasses must implement three focused methods:
-      - collect_urls   : scrape search result pages → list of article metadata dicts
-      - fetch_detail   : fetch full article content for one URL
-      - fetch_comments : fetch all comments for one article
+      - collect_urls   : scrape search result pages → list of content metadata dicts
+      - fetch_detail   : fetch content page → dict with article_id + raw field
+      - fetch_comments : fetch all comment pages → list of raw API objects
 
-    The default process() orchestrates these stages with proper async concurrency
-    and saves results to MongoDB as each piece arrives (streaming write).
+    All data is saved to MongoDB raw_documents (single collection, insert-only).
+    Parsing/cleaning happens in the cleaning service, NOT here.
 
     Data flow:
         collect_urls()
-            → fetch_detail()  → save to "articles" collection immediately
-                → fetch_comments() → save to "comments" collection immediately
+            → fetch_detail()  → raw_documents {type: "content", raw: "<html>"}
+                → fetch_comments() → raw_documents {type: "comment", raw: {...}, parent_id}
     """
+
+    MAX_COMMENT_PAGES: int = 10  # override per source if needed
 
     @abstractmethod
     async def collect_urls(self, keyword: str, interval: str) -> list[dict]:
-        """Scrape all search result pages. Return list of article metadata dicts."""
+        """Scrape all search result pages. Return list of content metadata dicts."""
         ...
 
     @abstractmethod
-    async def fetch_detail(self, article: dict) -> dict:
-        """Fetch full article content for one article. Return enriched article dict."""
+    async def fetch_detail(self, content: dict) -> dict:
+        """
+        Fetch content page. Return dict containing at minimum:
+          - article_id : str — needed immediately for the comment API
+          - raw        : str/dict — raw payload for the cleaning service
+        """
         ...
 
     @abstractmethod
-    async def fetch_comments(self, article: dict) -> list[dict]:
-        """Fetch all comments for one article. Return list of comment dicts."""
+    async def fetch_comments(self, content: dict) -> list[dict]:
+        """
+        Fetch all comment pages. Return list of raw API objects (not parsed).
+        Each object becomes one document in raw_documents.
+        """
         ...
 
     async def process(self, quest: dict, monitor: ProcessMonitor) -> int:
@@ -46,92 +56,121 @@ class BaseSource(ABC):
         Default orchestration — do NOT override unless the source needs custom flow.
 
         Stage 1: collect_urls   (sequential pages)
-        Stage 2: fetch_detail   (all articles concurrent via create_task)
-                 → save article to MongoDB immediately after each detail arrives
-        Stage 3: fetch_comments (fired immediately per article as detail completes)
-                 → save comments to MongoDB immediately after each batch arrives
+        Stage 2: fetch_detail   (all contents concurrent via create_task)
+                 → save raw content to MongoDB immediately, capture _id
+        Stage 3: fetch_comments (fired immediately per content as detail completes)
+                 → save raw comments to MongoDB, each linked via parent_id
 
-        Returns total number of documents saved across articles + comments.
+        Returns total number of documents saved across contents + comments.
         """
-        keyword  = quest["keyword"]
-        interval = quest.get("interval", "30d")
-        source   = self.__class__.__name__.replace("Source", "").lower()
+        keyword: str = quest["keyword"]
+        force: bool  = quest["force"]
+        interval: str = quest.get("interval", "30d")
+        source = self.__class__.__name__.replace("Source", "").lower()
 
-        articles = await self.collect_urls(keyword, interval)
-        if not articles:
+        contents = await self.collect_urls(keyword, interval)
+        if not contents:
             return 0
 
-        detail_tid  = monitor.add_detail_task(f"[{source}] articles", total=len(articles))
-        comment_tid = monitor.add_comment_task(f"[{source}] comments", total=len(articles))
+        detail_tid  = monitor.add_detail_task(f"[{source}] contents", total=len(contents))
+        comment_tid = monitor.add_comment_task(f"[{source}] comments", total=len(contents))
 
-        detail_tasks = [asyncio.create_task(self.fetch_detail(art)) for art in articles]
+        detail_tasks = [
+            asyncio.create_task(self.fetch_detail(item))
+            for item in contents
+            if not Redys.cache_exists(Endecode.md5(item["url"])) or force
+        ]
 
         comment_tasks: list[asyncio.Task] = []
-        saved_articles = 0
+        saved_contents = 0
 
         for coro in asyncio.as_completed(detail_tasks):
-            article = await coro
+            content = await coro
             monitor.advance_detail(detail_tid)
 
-            # Save article to MongoDB immediately — don't wait for its comments.
-            await self._save_article(article, keyword=keyword, source=source)
-            saved_articles += 1
+            # Save raw content and capture its MongoDB _id for parent_id in comments.
+            content_mongo_id = await self._save_content(content, keyword=keyword, source=source)
+            saved_contents += 1
 
-            # Fire comment task right away — races concurrently with other sources.
+            # Mark URL as scraped so future runs skip it (unless force=True).
+            await asyncio.to_thread(Redys.cache_set, Endecode.md5(content["url"]))
+
             comment_tasks.append(
                 asyncio.create_task(
-                    self._fetch_and_save_comments(article, keyword, source, comment_tid, monitor)
+                    self._fetch_and_save_comments(
+                        content, keyword, source, comment_tid, monitor,
+                        parent_id=content_mongo_id,
+                    )
                 )
             )
 
         comment_counts: list[int] = await asyncio.gather(*comment_tasks)
-        return saved_articles + sum(comment_counts)
+        return saved_contents + sum(comment_counts)
 
     # ------------------------------------------------------------------
     # Internal helpers — not part of the public plugin interface
     # ------------------------------------------------------------------
 
-    async def _save_article(self, article: dict, *, keyword: str, source: str) -> None:
+    async def _save_content(
+        self, content: dict, *, keyword: str, source: str
+    ) -> str | None:
+        """
+        Save raw content to MongoDB raw_documents.
+        Returns the inserted MongoDB _id (str) so comments can reference it via parent_id.
+        """
         doc = {
-            **article,
-            "source":       source,
-            "keyword":      keyword,
-            "content_type": "article",
-            "fetched_at":   datetime.now(timezone.utc).isoformat(),
+            "type": "content",
+            "source": source,
+            "keyword": keyword,
+            "url": content.get("url", ""),
+            "article_id": content.get("article_id", ""),
+            "title": content.get("title", ""),
+            "media": content.get("media", ""),
+            "desc": content.get("desc", ""),
+            "published_at": content.get("date", {}).get("text", ""),
+            "raw": content.get("raw", ""),
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
-        # await asyncio.to_thread(Mongo.insert_one, "articles", doc)
-        await asyncio.to_thread(File.write_json, "articles", doc)
+        return await asyncio.to_thread(Mongo.insert_one, settings.mongo_collection, doc)
 
     async def _fetch_and_save_comments(
         self,
-        article: dict,
+        content: dict,
         keyword: str,
         source: str,
         task_id: int,
         monitor: ProcessMonitor,
+        *,
+        parent_id: str | None,
     ) -> int:
-        comments = await self.fetch_comments(article)
+        """
+        Fetch and save raw comments for one content item.
+        Each raw API object from fetch_comments becomes one document in raw_documents.
+        """
+        comments = await self.fetch_comments(content)
         monitor.advance_comment(task_id)
 
         if not comments:
             return 0
 
+        now = datetime.now(timezone.utc).isoformat()
         docs = [
             {
-                **comment,
-                "source":       source,
-                "keyword":      keyword,
-                "article_url":  article.get("url", ""),
-                "content_type": "comment",
-                "fetched_at":   datetime.now(timezone.utc).isoformat(),
+                "type": "comment",
+                "source": source,
+                "keyword": keyword,
+                "article_id": content.get("article_id", ""),
+                "content_url": content.get("url", ""),
+                "parent_id": parent_id,
+                "raw": comment,
+                "fetched_at": now,
             }
             for comment in comments
         ]
-        await asyncio.to_thread(File.write_json, "comments", docs)
-        # await asyncio.to_thread(Mongo.insert_many, "comments", docs)
-        return len(docs)
+        return await asyncio.to_thread(Mongo.insert_many, settings.mongo_collection, docs)
 
 
 # Import plugins AFTER BaseSource is defined so decorators can reference it.
 # Each new source file must be added to this list.
-from sources.news import detik  # noqa: F401
+from sources.news import detik      # noqa: F401
+from sources.socmed import youtube  # noqa: F401

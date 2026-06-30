@@ -10,7 +10,7 @@ class ConnectionKafkaProducer:
     def __init__(self, bootstrap: str) -> KafkaProducer:
         for i in range(10):
             try:
-                _bootstrap: str = settings.kafka_broker
+                _bootstrap: str = settings.broker_address
                 self.kafka_produser = KafkaProducer(bootstrap_servers=_bootstrap)
                 
                 if self.kafka_produser:
@@ -31,7 +31,7 @@ class ConnectionKafkaConsumer:
 
         for i in range(10):
             try:
-                _bootstrap: str = settings.kafka_broker
+                _bootstrap: str = settings.broker_address
 
                 self.kafka_consumer = KafkaConsumer(
                     topic,

@@ -16,3 +16,4 @@ pyquery
 cloudscraper
 jmespath
 typing_extensions
+redis

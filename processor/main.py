@@ -1,17 +1,34 @@
-import logging
+import time
 
-from shared.config import settings
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from shared.utils import log
+from processor.cleaner import Cleaner
+from processor.ai import AIWorker
 
 
 def main() -> None:
-    logger.info("Processor starting — Gemini key present: %s", bool(settings.gemini_api_key))
-    # TODO: read unclassified documents from MongoDB,
-    #       call Gemini for sentiment/stance classification,
-    #       write ClassifiedDocument records to PostgreSQL
-    raise NotImplementedError
+    """
+    Processor loop — runs continuously:
+      1. Cleaner  : MongoDB raw_documents → parse → PostgreSQL warehouse
+      2. AI worker: PostgreSQL unprocessed comments → classify → update sentiment
+
+    Both stages run sequentially in one loop iteration, then sleep before the next.
+    """
+    log.info("[ PROCESSOR ] starting — cleaner + AI worker")
+
+    cleaner   = Cleaner()
+    ai_worker = AIWorker()
+
+    while True:
+        cleaned = cleaner.run()
+        log.info("[ PROCESSOR ] cleaner pass complete — {} rows", cleaned)
+
+        try:
+            classified = ai_worker.run()
+            log.info("[ PROCESSOR ] AI pass complete — {} rows", classified)
+        except NotImplementedError:
+            log.warning("[ PROCESSOR ] AI worker not yet implemented — skipping")
+
+        time.sleep(30)
 
 
 if __name__ == "__main__":

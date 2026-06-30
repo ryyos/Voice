@@ -94,7 +94,7 @@ class DetikSource(BaseSource):
 
     @override
     async def collect_urls(self, keyword: str, interval: str) -> list[dict]:
-        articles: list[dict] = list()
+        contents: list[dict] = []
         page = 1
         while True:
             response: Network.Response = await Network.aget(
@@ -105,42 +105,37 @@ class DetikSource(BaseSource):
             cards = self._parse_cards(response.text)
             if not cards:
                 break
-            articles.extend(cards)
+            contents.extend(cards)
             log.debug(f"[detik] page {page} → {len(cards)} cards")
             page += 1
-        return articles
+        return contents
 
     @override
-    async def fetch_detail(self, article: dict) -> dict:
-        url = article.get("url", "")
+    async def fetch_detail(self, content: dict) -> dict:
+        url = content.get("url", "")
         if not url:
-            return article
+            return content
 
         response = await Network.aget(url=url)
         if not response or not response.text:
-            return article
+            return content
 
         doc = pq(response.text)
         return {
-            **article,
-            "author":    doc.find('div[class="detail__author"]').text(),
-            "thumbnail": {
-                "url":  doc.find("div.detail__media img").attr("src"),
-                "desc": doc.find(".detail__media-caption").text(),
-            },
-            "content": doc.find(".detail__body-text").text(),
-            "article_id": doc.find('meta[name="dtk:articleid"]').attr("content")
+            **content,
+            "article_id": doc.find('meta[name="dtk:articleid"]').attr("content") or "",
+            "raw": response.text,
         }
 
     @override
-    async def fetch_comments(self, article: dict) -> list[dict]:
-        article_id = article.get("article_id", "")
+    async def fetch_comments(self, content: dict) -> list[dict]:
+        article_id = content.get("article_id", "")
         if not article_id:
             return []
 
         comments: list[dict] = []
         page = 1
-        while True:
+        while page <= self.MAX_COMMENT_PAGES:
             response: Network.Response = await Network.apost(
                 url=self._COMMENT_ENDPOINT,
                 json=self._build_comment_payload(article_id, page),

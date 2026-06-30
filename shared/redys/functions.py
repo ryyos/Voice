@@ -1,135 +1,72 @@
-import os
-import json
+from __future__ import annotations
 
-from json import dumps
+from redis import Redis
+from shared.utils.logger import log
+from shared.config import settings
+from .connection import RedysConnection
 
-from typing import Any, Dict, Generator
-from loguru import logger
-from botocore.exceptions import ClientError
-from .connection import ConnectionRedys
 
 class Redys:
-    _instance: dict = dict()
-    
-    def __new__(cls, **kwargs):
-        if not cls._instance.get("c"):
-            cls._instance["i"] = super().__new__(cls)
-            cls._instance["c"] = ConnectionRedys(**kwargs)
-        
-    @classmethod
-    def check(cls, key: str, id: str, **kwargs) -> Dict:
-        cls(**kwargs)
-        """
-        Examples:
-            >>> check(key="xxxx:xxxx:xxxx", id="xxxxxx")
-            {
-                "data": xxxxx
-            }
-            
-            >>> check(key="xxxx:xxxx:xxxx", id="xxxxxx")
-            None
-        """
-        __key: str = "{}:{}".format(
-            key,
-            id
-        )
-        __key = cls._instance["c"].client.get(__key)
-        if __key:
-            logger.info(f'DATA ALREDY IN REDIS :: ID [ {id} ]')
-            return json.loads(__key)
-        return None
-        ...
-        
-    @classmethod
-    def push(cls, data: str, key: str, id: str, **kwargs):
-        cls(**kwargs)
-        """
-        Examples:
-            >>> push(
-                data={
-                    "data": xxxxx
-                },
-                key="xxxx:xxxx:xxxx",
-                id="xxxxxx"
-            )
-        """
-        cls._instance["c"].client.set(
-            "{}:{}".format(
-                key,
-                id
-            ),
-            json.dumps(
-                data,
-                ensure_ascii=False
-            ),
-            **kwargs
-        )
-        logger.info(f"NEW DATA ADD IN REDIS :: ID [ {id} ]")
-        
-        
-    @classmethod
-    def get(cls, key: str, id: str, **kwargs) -> Dict | None:
-        cls(**kwargs)
-        """
-        Get data from redis by key without deleting it
+    """
+    Valkey/Redis client — singleton per process.
 
-        Examples:
-            >>> get(key="xxxx:xxxx:xxxx", id="xxxxxx")
-            {
-                "data": xxxxx
-            }
-        """
-        __key: str = f"{key}:{id}"
-        data = cls._instance["c"].client.get(__key)
+    Two namespaces:
+      scrape:cache:<url>       — anti re-scrape flag (set by worker)
+      cleaner:checkpoint       — last MongoDB _id processed by cleaner
+    """
 
-        if not data:
-            return None
-
-        logger.info(f"GET DATA FROM REDIS :: ID [ {id} ]")
-        return json.loads(data)
-
+    _conn: RedysConnection | None = None
 
     @classmethod
-    def consume(
-        cls,
-        key: str,
-        delete: bool = True,
-        count: int = 100,
-        **kwargs
-    ) -> Generator[Dict, None, None]:
-        """
-        Consume all redis keys by prefix and return id + data
+    def _client(cls) -> Redis:
+        if cls._conn is None:
+            cls._conn = RedysConnection()
+        return cls._conn.client
 
-        Examples:
-            >>> consume_by_prefix(key="order:process")
-        """
-        cls(**kwargs)
-        
-        pattern = f"{key}:*"
-        cursor = 0
+    # ------------------------------------------------------------------
+    # Anti re-scrape cache  (namespace: scrape:cache)
+    # ------------------------------------------------------------------
 
-        while True:
-            cursor, keys = cls._instance["c"].client.scan(
-                cursor=cursor,
-                match=pattern,
-                count=count
-            )
+    @classmethod
+    def cache_exists(cls, text: str, key: str = settings.valkey_key) -> bool:
+        """Return True if this text has already been scraped."""
+        return bool(cls._client().exists(f"{key}:{text}"))
 
-            for full_key in keys:
-                raw = cls._instance["c"].client.get(full_key)
-                if not raw:
-                    continue
+    @classmethod
+    def cache_set(cls, text: str, key: str = settings.valkey_key, ttl_seconds: int = 60 * 60 * 24 * 30) -> None:
+        """Mark text as scraped. Default TTL = 30 days."""
+        cls._client().set(f"{key}:{text}", "1", ex=ttl_seconds)
+        log.debug("[ VALKEY ] cache_set → {}", text)
 
-                yield (res:={
-                    "id": full_key.split(":")[-1],
-                    "data": json.loads(raw)
-                })
-                logger.info(
-                    f"CONSUME REDIS BY PREFIX :: KEY [ {key} ] | TOTAL [ {len(res)} ]"
-                )
+    # ------------------------------------------------------------------
+    # Cleaner checkpoint  (namespace: cleaner)
+    # ------------------------------------------------------------------
 
-                if delete:
-                    cls._instance["c"].client.delete(full_key)
+    @classmethod
+    def get_checkpoint(cls, name: str = "cleaner") -> str | None:
+        """Return last processed MongoDB _id string, or None if no checkpoint yet."""
+        return cls._client().get(f"{name}:checkpoint")
 
-            if cursor == 0:
-                break
+    @classmethod
+    def set_checkpoint(cls, mongo_id: str, name: str = "cleaner") -> None:
+        """Save last processed MongoDB _id string."""
+        cls._client().set(f"{name}:checkpoint", mongo_id)
+
+    # ------------------------------------------------------------------
+    # Generic raw key access (for ad-hoc use)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def raw_get(cls, key: str) -> str | None:
+        return cls._client().get(key)
+
+    @classmethod
+    def raw_set(cls, key: str, value: str, ttl_seconds: int | None = None) -> None:
+        cls._client().set(key, value, ex=ttl_seconds)
+
+    @classmethod
+    def close(cls) -> None:
+        if cls._conn:
+            cls._conn.client.close()
+            cls._conn = None
+            log.debug("[ VALKEY ] connection closed")

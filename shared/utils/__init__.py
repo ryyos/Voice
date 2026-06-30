@@ -5,3 +5,4 @@ from .datetime import Time
 from .logger import log
 from .monitor import ProcessMonitor
 from .search import Search
+from .endecode import Endecode

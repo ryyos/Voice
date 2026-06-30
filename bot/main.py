@@ -20,7 +20,8 @@ async def handle_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "keyword": keyword,
             "interval": "30d",
             "platforms": "all",
-            "news_sources": "all"
+            "news_sources": "all",
+            "force": False
         },
         topic=settings.kafka_topic_keyword,
         bootstrap=settings.kafka_broker,

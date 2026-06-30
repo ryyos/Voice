@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.console import Group
 from rich.progress import (
@@ -96,7 +97,7 @@ class ProcessMonitor:
 
     def add_detail_task(self, description: str, total: int = 0) -> int:
         p = self._detail if self._split else self._unified
-        return p.add_task(f"[blue]{description}", total=total)
+        return p.add_task(f"[blue]{escape(description)}", total=total)
 
     def advance_detail(self, task_id: int, advance: int = 1) -> None:
         p = self._detail if self._split else self._unified
@@ -112,7 +113,7 @@ class ProcessMonitor:
 
     def add_comment_task(self, description: str, total: int = 0) -> int:
         p = self._comment if self._split else self._unified
-        return p.add_task(f"[green]{description}", total=total)
+        return p.add_task(f"[green]{escape(description)}", total=total)
 
     def advance_comment(self, task_id: int, advance: int = 1) -> None:
         p = self._comment if self._split else self._unified
