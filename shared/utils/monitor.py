@@ -95,7 +95,7 @@ class ProcessMonitor:
     # Detail stage
     # ------------------------------------------------------------------
 
-    def add_detail_task(self, description: str, total: int = 0) -> int:
+    def add_detail_task(self, description: str, total: int | None = None) -> int:
         p = self._detail if self._split else self._unified
         return p.add_task(f"[blue]{escape(description)}", total=total)
 
@@ -111,7 +111,7 @@ class ProcessMonitor:
     # Comment stage
     # ------------------------------------------------------------------
 
-    def add_comment_task(self, description: str, total: int = 0) -> int:
+    def add_comment_task(self, description: str, total: int | None = None) -> int:
         p = self._comment if self._split else self._unified
         return p.add_task(f"[green]{escape(description)}", total=total)
 

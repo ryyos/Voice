@@ -177,6 +177,10 @@ class _HttpxBackend:
         if auth:
             client_kw["auth"] = auth
 
+        proxy = _proxy_url()
+        if proxy:
+            client_kw["proxy"] = proxy
+
         with httpx.Client(**client_kw) as client:
             if progress_callback:
                 start = time.time()
@@ -248,6 +252,9 @@ class _RequestsBackend:
         if not _HAS_REQUESTS:
             raise ImportError("requests not installed → pip install requests")
 
+        proxy = _proxy_url()
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+
         start = time.time()
         resp = _requests_lib.request(
             method=method,
@@ -262,6 +269,7 @@ class _RequestsBackend:
             timeout=timeout,
             allow_redirects=follow_redirects,
             verify=verify,
+            proxies=proxies,
             stream=progress_callback is not None,
         )
 
@@ -345,6 +353,23 @@ class _CloudscraperBackend:
             content=content,
             elapsed=elapsed,
         )
+
+
+# ── config helpers (lazy import to avoid circular deps) ─────────────────
+def _scraper_delay() -> float:
+    try:
+        from shared.config import settings
+        return settings.scraper_delay
+    except Exception:
+        return 1.0
+
+
+def _proxy_url() -> str:
+    try:
+        from shared.config import settings
+        return settings.proxy_url or ""
+    except Exception:
+        return ""
 
 
 # ── registry ────────────────────────────────────────────────────────────
@@ -586,10 +611,16 @@ class Network:
 
     @staticmethod
     async def aget(url: str, **kwargs) -> Response | None:
+        delay = _scraper_delay()
+        if delay > 0:
+            await asyncio.sleep(delay)
         return await asyncio.to_thread(Network.get, url, **kwargs)
 
     @staticmethod
     async def apost(url: str, **kwargs) -> Response | None:
+        delay = _scraper_delay()
+        if delay > 0:
+            await asyncio.sleep(delay)
         return await asyncio.to_thread(Network.post, url, **kwargs)
 
     @staticmethod

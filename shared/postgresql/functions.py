@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS contents (
     source      TEXT        NOT NULL,
     keyword     TEXT        NOT NULL,
     url         TEXT,
-    article_id  TEXT,
+    content_id  TEXT,
     title       TEXT,
     author      TEXT,
     media       TEXT,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS comments (
     source_id       TEXT        NOT NULL,
     source          TEXT        NOT NULL,
     keyword         TEXT        NOT NULL,
-    article_id      TEXT,
+    content_id      TEXT,
     content_url     TEXT,
     mongo_parent_id TEXT,
     mongo_id        TEXT,
@@ -107,10 +107,10 @@ class PG:
         """Insert one content row. Silently skips on duplicate (source, source_id)."""
         sql = """
             INSERT INTO contents
-                (source_id, source, keyword, url, article_id, title, author,
+                (source_id, source, keyword, url, content_id, title, author,
                  media, content, published_at, mongo_id)
             VALUES
-                (%(source_id)s, %(source)s, %(keyword)s, %(url)s, %(article_id)s,
+                (%(source_id)s, %(source)s, %(keyword)s, %(url)s, %(content_id)s,
                  %(title)s, %(author)s, %(media)s, %(content)s, %(published_at)s,
                  %(mongo_id)s)
             ON CONFLICT (source, source_id) DO NOTHING
@@ -133,14 +133,14 @@ class PG:
             return 0
         sql = """
             INSERT INTO comments
-                (source_id, source, keyword, article_id, content_url,
+                (source_id, source, keyword, content_id, content_url,
                  mongo_parent_id, mongo_id, author, content, prokontra, published_at)
             VALUES %s
             ON CONFLICT (source, source_id) DO NOTHING
         """
         values = [
             (
-                r["source_id"], r["source"], r["keyword"], r.get("article_id"),
+                r["source_id"], r["source"], r["keyword"], r.get("content_id"),
                 r.get("content_url"), r.get("mongo_parent_id"), r.get("mongo_id"),
                 r.get("author"), r.get("content"), r.get("prokontra"),
                 r.get("published_at"),

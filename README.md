@@ -103,9 +103,13 @@ voice/
 │   ├── __init__.py             # BaseSource abstract class + plugin imports
 │   ├── registry.py             # @register_source decorator
 │   ├── news/
-│   │   └── detik.py            # Detik source plugin
+│   │   ├── detik.py            # Detik source plugin (SSR scraping + GraphQL comments)
+│   │   ├── cnn.py              # CNN Indonesia source plugin (JSON API + GraphQL comments)
+│   │   ├── liputan6.py         # Liputan6 source plugin (SSR scraping, no comments)
+│   │   └── merdeka.py          # Merdeka.com source plugin (SSR scraping, no comments)
 │   └── socmed/
-│       └── youtube.py          # YouTube source plugin (via Piped)
+│       ├── youtube.py          # YouTube source plugin (via Piped)
+│       └── reddit.py           # Reddit source plugin (public JSON API, no auth)
 ├── shared/
 │   ├── config.py               # pydantic-settings — all config from .env, no hardcoded defaults
 │   ├── kafka/                  # Producer + Consumer wrappers

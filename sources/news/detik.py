@@ -6,7 +6,6 @@ except ImportError:
 from sources import BaseSource, PyQuery as pq
 from sources.registry import register_source
 from shared.utils import Network, Time, log, Search
-from icecream import ic
 
 
 @register_source("detik")
@@ -123,14 +122,14 @@ class DetikSource(BaseSource):
         doc = pq(response.text)
         return {
             **content,
-            "article_id": doc.find('meta[name="dtk:articleid"]').attr("content") or "",
+            "content_id": doc.find('meta[name="dtk:articleid"]').attr("content") or "",
             "raw": response.text,
         }
 
     @override
     async def fetch_comments(self, content: dict) -> list[dict]:
-        article_id = content.get("article_id", "")
-        if not article_id:
+        content_id = content.get("content_id", "")
+        if not content_id:
             return []
 
         comments: list[dict] = []
@@ -138,7 +137,7 @@ class DetikSource(BaseSource):
         while page <= self.MAX_COMMENT_PAGES:
             response: Network.Response = await Network.apost(
                 url=self._COMMENT_ENDPOINT,
-                json=self._build_comment_payload(article_id, page),
+                json=self._build_comment_payload(content_id, page),
                 headers={
                     "content-type": "application/json",
                     "origin": "https://comment.detik.com",

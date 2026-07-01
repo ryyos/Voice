@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     valkey_url: str
     valkey_key: str
 
+    # Scraper
+    scraper_delay: float = 1.0      # detik antar request (0 = no delay)
+    scraper_limit: int = 50         # max content per source per job (0 = unlimited)
+    proxy_url: str = ""             # opsional: "http://user:pass@host:port" (kosong = no proxy)
+
     # Monitoring
     log_split: bool
 

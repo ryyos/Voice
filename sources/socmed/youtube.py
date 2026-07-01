@@ -1,4 +1,4 @@
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 
 try:
     from typing import override
@@ -13,6 +13,17 @@ from shared.config import settings
 
 @register_source("youtube")
 class YoutubeSource(BaseSource):
+
+    @staticmethod
+    def _piped_to_cdn(url: str) -> str:
+        """Convert a Piped-proxied URL to the real CDN URL via the ?host= param."""
+        if not url or "localhost" not in url:
+            return url
+        parsed = urlparse(url)
+        host = parse_qs(parsed.query).get("host", [None])[0]
+        if not host:
+            return url
+        return f"https://{host}{parsed.path}"
 
     @property
     def _base(self) -> str:
@@ -59,13 +70,14 @@ class YoutubeSource(BaseSource):
                 raw_url: str = item.get("url", "")
                 video_id = self._video_id(raw_url)
                 videos.append({
-                    "url": f"https://www.youtube.com/watch?v={video_id}",
-                    "title": item.get("title", ""),
-                    "media": item.get("uploaderName", ""),
-                    "desc": item.get("shortDescription", ""),
+                    "url":       f"https://www.youtube.com/watch?v={video_id}",
+                    "title":     item.get("title", ""),
+                    "media":     item.get("uploaderName", ""),
+                    "desc":      item.get("shortDescription", ""),
+                    "thumbnail": self._piped_to_cdn(item.get("thumbnail", "")),
                     "date": {
                         "epoch": item.get("uploaded"),
-                        "text": item.get("uploadedDate", ""),
+                        "text":  item.get("uploadedDate", ""),
                     },
                 })
 
@@ -84,13 +96,16 @@ class YoutubeSource(BaseSource):
 
         response = await Network.aget(url=f"{self._base}/streams/{video_id}")
         if not response or not response.ok:
-            return {**content, "article_id": video_id, "raw": {}}
+            return {**content, "content_id": video_id, "raw": {}}
 
-        return {**content, "article_id": video_id, "raw": response.json()}
+        raw = response.json()
+        if "thumbnailUrl" in raw:
+            raw = {**raw, "thumbnailUrl": self._piped_to_cdn(raw["thumbnailUrl"])}
+        return {**content, "content_id": video_id, "raw": raw}
 
     @override
     async def fetch_comments(self, content: dict) -> list[dict]:
-        video_id = content.get("article_id", "")
+        video_id = content.get("content_id", "")
         if not video_id:
             return []
 
@@ -119,6 +134,6 @@ class YoutubeSource(BaseSource):
             if not nextpage or page >= self.MAX_COMMENT_PAGES:
                 break
             
-            page+=1
+            page += 1
 
         return comments

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pyquery import PyQuery
 
 from shared.config import settings
-from shared.utils import ProcessMonitor, Endecode
+from shared.utils import ProcessMonitor, Endecode, log
 from shared.mongodb.functions import Mongo
 from shared.redys import Redys
 
@@ -15,7 +15,7 @@ class BaseSource(ABC):
 
     Subclasses must implement three focused methods:
       - collect_urls   : scrape search result pages → list of content metadata dicts
-      - fetch_detail   : fetch content page → dict with article_id + raw field
+      - fetch_detail   : fetch content page → dict with content_id + raw field
       - fetch_comments : fetch all comment pages → list of raw API objects
 
     All data is saved to MongoDB raw_documents (single collection, insert-only).
@@ -29,6 +29,14 @@ class BaseSource(ABC):
 
     MAX_COMMENT_PAGES: int = 10  # override per source if needed
 
+    @property
+    def _default_limit(self) -> int:
+        try:
+            from shared.config import settings
+            return settings.scraper_limit
+        except Exception:
+            return 50
+
     @abstractmethod
     async def collect_urls(self, keyword: str, interval: str) -> list[dict]:
         """Scrape all search result pages. Return list of content metadata dicts."""
@@ -38,7 +46,7 @@ class BaseSource(ABC):
     async def fetch_detail(self, content: dict) -> dict:
         """
         Fetch content page. Return dict containing at minimum:
-          - article_id : str — needed immediately for the comment API
+          - content_id : str — needed immediately for the comment API
           - raw        : str/dict — raw payload for the cleaning service
         """
         ...
@@ -68,12 +76,25 @@ class BaseSource(ABC):
         interval: str = quest.get("interval", "30d")
         source = self.__class__.__name__.replace("Source", "").lower()
 
+        # Register progress bars upfront — every source always appears in the monitor.
+        # total=None → indeterminate spinner while collect_urls is running.
+        detail_tid  = monitor.add_detail_task(f"[{source}] contents")
+        comment_tid = monitor.add_comment_task(f"[{source}] comments")
+
         contents = await self.collect_urls(keyword, interval)
+
         if not contents:
+            monitor.update_detail(detail_tid, total=0)
+            monitor.update_comment(comment_tid, total=0)
             return 0
 
-        detail_tid  = monitor.add_detail_task(f"[{source}] contents", total=len(contents))
-        comment_tid = monitor.add_comment_task(f"[{source}] comments", total=len(contents))
+        limit: int = quest.get("limit", self._default_limit)
+        if limit and len(contents) > limit:
+            log.debug(f"[{source}] limit {limit} applied ({len(contents)} → {limit})")
+            contents = contents[:limit]
+
+        monitor.update_detail(detail_tid, total=len(contents))
+        monitor.update_comment(comment_tid, total=len(contents))
 
         detail_tasks = [
             asyncio.create_task(self.fetch_detail(item))
@@ -123,7 +144,7 @@ class BaseSource(ABC):
             "source": source,
             "keyword": keyword,
             "url": content.get("url", ""),
-            "article_id": content.get("article_id", ""),
+            "content_id": content.get("content_id", ""),
             "title": content.get("title", ""),
             "media": content.get("media", ""),
             "desc": content.get("desc", ""),
@@ -159,7 +180,7 @@ class BaseSource(ABC):
                 "type": "comment",
                 "source": source,
                 "keyword": keyword,
-                "article_id": content.get("article_id", ""),
+                "content_id": content.get("content_id", ""),
                 "content_url": content.get("url", ""),
                 "parent_id": parent_id,
                 "raw": comment,
@@ -172,5 +193,7 @@ class BaseSource(ABC):
 
 # Import plugins AFTER BaseSource is defined so decorators can reference it.
 # Each new source file must be added to this list.
-from sources.news import detik      # noqa: F401
-from sources.socmed import youtube  # noqa: F401
+from sources.news import detik, cnn, liputan6, merdeka
+from sources.socmed import youtube, reddit
+
+__all__ = ["detik", "cnn", "liputan6", "merdeka", "youtube", "reddit"]
